@@ -48,6 +48,33 @@ def test_no_runtime_requirement_needs_a_pre_release(built_dist, package):
     assert pre_releases == []
 
 
+@pytest.mark.parametrize("package", ["deriva_cli", "deriva_studio", "deriva_dev"])
+def test_every_runtime_requirement_stops_before_its_next_breaking_release(built_dist, package):
+    """An installed tool resolves without the lockfile: each Requires-Dist is an exact pin or has an upper bound, below
+    the next major (1.x and later) or the next minor (0.x, where a minor may break)."""
+    from packaging.requirements import Requirement
+    from packaging.version import Version
+
+    with zipfile.ZipFile(next(built_dist.glob(f"{package}-*.whl"))) as wheel:
+        metadata = wheel.read(next(m for m in wheel.namelist() if m.endswith(".dist-info/METADATA"))).decode("utf-8")
+    requirements = [Requirement(line.split(":", 1)[1].strip()) for line in metadata.splitlines() if line.startswith("Requires-Dist:")]
+    open_ended, too_wide = [], []
+    for requirement in requirements:
+        specs = {spec.operator: Version(spec.version) for spec in requirement.specifier}
+        if "==" in specs:
+            continue
+        if "<" not in specs:
+            open_ended.append(str(requirement))
+            continue
+        low, high = specs.get(">="), specs["<"]
+        # The next breaking release after the lower bound: the next major, or for 0.x the next minor (<2.1 above
+        # >=1.2 is too wide, since it lets 2.0 in)
+        boundary = (Version(f"{low.major + 1}") if low.major >= 1 else Version(f"0.{low.minor + 1}")) if low is not None else None
+        if boundary is not None and high > boundary:
+            too_wide.append(str(requirement))
+    assert (open_ended, too_wide) == ([], [])
+
+
 def _tracked(prefix: str) -> set[str]:
     """Source files of the working tree under ``prefix``: tracked or new, not ignored, still present (renames and new files count)."""
     listed = subprocess.run(["git", "ls-files", "--cached", "--others", "--exclude-standard", prefix], cwd=ROOT, check=True, capture_output=True, text=True).stdout.split()

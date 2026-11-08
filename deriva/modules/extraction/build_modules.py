@@ -53,6 +53,7 @@ class BuildModule:
     files: list[str] = field(default_factory=list)  # The files it holds itself, sorted
     members: list[str] = field(default_factory=list)  # For a system: the module paths it lists, sorted
     excluded: str | None = None  # Why it is no application component (infrastructure-as-code, test-only, tooling)
+    grouped: bool = False  # A folder with the same project layout as another one: a module of the design, whoever uses it
 
 
 def module_id(repository: str, path: str) -> str:
@@ -185,11 +186,25 @@ def development_only(manifests: dict[str, str]) -> set[str]:
     return folders
 
 
+# The project types of a .NET Framework web application and web site: their output is a library the web server loads
+_WEB_PROJECT_TYPES = re.compile(r"<ProjectTypeGuids>[^<]*\{(349c5851-65df-11da-9384-00065b846f21|e24c65dc-7377-472b-9aba-bc803b73c61a)\}", re.IGNORECASE)
+
+
+def csproj_entry(text: str) -> str | None:
+    """The kind of program a .NET project builds, None for a class library: ``web`` by the web or worker SDK or a
+    .NET Framework web project type, ``exe`` by its output type."""
+    if re.search(r"""<Project\s[^>]*Sdk\s*=\s*["']Microsoft\.NET\.Sdk\.(Web|Worker)["']""", text) or _WEB_PROJECT_TYPES.search(text):
+        return "web"
+    return "exe" if re.search(r"<OutputType>\s*(Win)?Exe\s*</OutputType>", text) else None
+
+
 def declares_entry(path: str, text: str) -> bool:
     """Whether a manifest declares an entry point by its ecosystem's convention: npm ``bin``, ``main`` or a ``start``
     script, a Maven ``mainClass``, the Spring Boot plugin or war packaging, Gradle's application, Spring Boot or war
-    plugin, or pyproject project scripts."""
+    plugin, pyproject project scripts, or a .NET project that builds a program."""
     lower = PurePosixPath(path).name.lower()
+    if lower.endswith(".csproj"):
+        return csproj_entry(text) is not None
     if lower == "package.json":
         try:
             data = json.loads(text)
@@ -222,6 +237,27 @@ def behaviour_per_file(
     wanted = set(code_files)
     total = sum(1 for path, name in methods if path in wanted and counts(name))
     return total / len(wanted) if wanted else 0.0
+
+
+# Why a module and the units inside it are no part of the system itself (the DeployableUnit derivation queries read these too)
+_NOT_THE_SYSTEM = frozenset({"infrastructure-as-code", "test-only", "tooling"})
+
+
+def library_repository(modules: list[BuildModule], unit_paths: list[str]) -> BuildModule | None:
+    """The module to keep as the component of a repository that is a library: no module stays a component and every
+    unit lies in a test, tooling or infrastructure module, so without it the model would hold no component. The
+    outermost module without an entry point takes that role; two at the same depth say nothing, so none does."""
+    if any(m.module and m.excluded is None for m in modules):
+        return None
+    outside = [m.path for m in modules if m.excluded in _NOT_THE_SYSTEM]
+    if any(not any(unit == path or unit.startswith(path + "/") for path in outside) for unit in unit_paths):
+        return None
+    unused = [m for m in modules if m.module and m.excluded == "no entry point"]
+    if not unused:
+        return None
+    depth = min(m.path.count("/") for m in unused)
+    top = [m for m in unused if m.path.count("/") == depth]
+    return top[0] if len(top) == 1 else None
 
 
 def usage_role(users: int, behaviour: float, entry: bool, min_behaviour: float) -> str | None:
@@ -259,6 +295,23 @@ def feature_areas(code_files: list[str], route_files: set[str], entity_files: se
     entities = {a for p in code_files if p in entity_files and (a := area_of(p))}
     areas = sorted(f"{root}/{a}" for a in routes & entities)
     return areas if len(areas) >= 2 else []
+
+
+def repeated_layouts(modules: set[str], manifest_folders: set[str], min_members: int) -> dict[str, list[str]]:
+    """Folders without a manifest of their own whose modules repeat another such folder's layout (at least ``min_members``
+    of the same names, Application and Domain under both Orders and Billing) -> those modules: one module of the design
+    built as several projects. Modules that share no such layout stay as they are."""
+    children: dict[str, set[str]] = {}
+    for module in modules:
+        folder = _parent(module)
+        if folder not in manifest_folders:
+            children.setdefault(folder, set()).add(PurePosixPath(module).name)
+    groups: dict[str, list[str]] = {}
+    for folder, names in children.items():
+        shared = max((len(names & other) for f, other in children.items() if f != folder), default=0)
+        if shared >= min_members:
+            groups[folder] = sorted(f"{folder}/{name}" for name in names)
+    return groups
 
 
 def _listed(path: str, text: str) -> list[str]:
@@ -325,6 +378,19 @@ def detect_modules(repository: str, files: list[dict[str, Any]], manifests: dict
 
     tooling = development_only(manifests)
 
+    def _after_repository(name: str) -> list[str]:
+        # The name without the repository's words, and without a scope or group in front (@acme/, acme:), which names
+        # the publisher; a word in front of the repository's name stays (test-shop-helper). Else what follows the
+        # leading words they share (example-vote-worker in example-voting-app). A name that is only those words keeps them
+        scope = re.match(r"@[^/]+/|[\w.-]+:", name)
+        words, own = _words(name[scope.end() :] if scope else name), [w.casefold() for w in _words(_folder_name(repository))]
+        lower = [w.casefold() for w in words]
+        for start in range(len(words) - len(own) + 1):
+            if lower[start : start + len(own)] == own:
+                return words[:start] + words[start + len(own) :]
+        shared = next((i for i, (a, b) in enumerate(zip(lower, own, strict=False)) if a != b), min(len(lower), len(own)))
+        return words[shared:] if shared < len(words) else words
+
     def excluded(folder: str) -> str | None:
         manifest = candidates[folder]
         if folder in tooling:
@@ -335,22 +401,36 @@ def detect_modules(repository: str, files: list[dict[str, Any]], manifests: dict
             return "infrastructure-as-code"
         if rules.test_dependencies and dependencies and all(matches(d, rules.test_dependencies) for d in dependencies):
             return "test-only"
-        named = {w.casefold() for w in _words(_folder_name(folder)) + _words(_manifest_name(manifest, manifests.get(manifest, "")) or "")}
-        if named & {w.casefold() for w in rules.test_words}:
-            return "test-only"
+        words = {w.casefold() for w in rules.test_words}
+        # The repository's own name says nothing about its code, also in front of a module's name (example-shop-orders)
+        if folder != repository:
+            own = _after_repository(_folder_name(folder)) + _after_repository(_manifest_name(manifest, manifests.get(manifest, "")) or "")
+            # A folder above it counts only when it is a test word itself (examples/demo, not ab-test-service/backend)
+            above = folder.removeprefix(repository).strip("/").split("/")[:-1]
+            if {w.casefold() for w in own} & words or {part.casefold() for part in above} & words:
+                return "test-only"
         return None
 
     reasons = {folder: reason for folder in code if (reason := excluded(folder))}
     modules = set(code) - set(reasons)
+    groups = repeated_layouts(modules, set(candidates), rules.min_members)
+    for folder, members in groups.items():
+        candidates[folder] = ""
+        own[folder] = sorted(path for member in members for path in own.get(member, []))
+        modules = (modules - set(members)) | {folder}
+    group_of = {member: folder for folder, members in groups.items() for member in members}
     systems: dict[str, list[str]] = {}
     for folder, manifest in candidates.items():
         listed: set[str] = set()
         for pattern in _listed(manifest, manifests.get(manifest, "")):
             target = str(PurePosixPath(folder, pattern.strip("/")))
             listed |= {m for m in set(code) if fnmatch.fnmatchcase(m, target)}
-        # Excluded modules count as listed (the aggregation is a fact of the build); its members are the other ones
-        if len(listed) >= rules.min_members and listed & modules:
-            systems[folder] = sorted(listed & modules)
+        # Excluded modules count as listed (the aggregation is a fact of the build); its members are the other ones. A
+        # grouped project counts as its group, for the members and for the minimum (two projects of one group are one)
+        listed = {group_of.get(m, m) for m in listed}
+        members = listed & modules
+        if len(listed) >= rules.min_members and members:
+            systems[folder] = sorted(members)
 
     out = []
     raws: dict[str, str] = {}
@@ -377,6 +457,7 @@ def detect_modules(repository: str, files: list[dict[str, Any]], manifests: dict
                 files=sorted(own.get(folder, [])),
                 members=systems.get(folder, []),
                 excluded=reasons.get(folder),
+                grouped=folder in groups,
             )
         )
     # The root holds the repository: it takes the repository's name (an aggregator's own name is often "parent")

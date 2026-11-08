@@ -29,6 +29,7 @@ from __future__ import annotations
 import json
 import re
 import shlex
+from collections import defaultdict
 from collections.abc import Callable
 from enum import Enum
 from pathlib import Path, PurePosixPath
@@ -46,6 +47,7 @@ from deriva.common.file_utils import describe_os_error
 
 from .base import (
     current_timestamp,
+    dependency_node_id,
     generate_edge_id,
     generate_file_node_id,
     generate_method_node_id,
@@ -70,7 +72,7 @@ class EdgeType(str, Enum):  # noqa: UP042 - StrEnum would change str() of member
 ALL_EDGE_TYPES = set(EdgeType)
 
 # Supported languages for tree-sitter extraction
-SUPPORTED_LANGUAGES = ("python", "javascript", "typescript", "java", "csharp", "cobol", "jcl", "bms")
+SUPPORTED_LANGUAGES = ("python", "javascript", "typescript", "java", "csharp", "golang", "cobol", "jcl", "bms")
 # Sources that include other sources by member name (COPY RECA), not by path
 MEMBER_EXTENSIONS = frozenset({".cbl", ".cob", ".cobol", ".cpy", ".jcl", ".prc", ".proc", ".bms"})
 
@@ -461,10 +463,16 @@ def extract_edges_from_file(
     call_languages: dict[str, frozenset[str]] | None = None,
     scope_of: Callable[[str], str] | None = None,
     java_files: dict[str, list[str]] | None = None,
+    csharp_namespaces: dict[str, list[str]] | None = None,
     import_roots: tuple[str, ...] = (),
+    go_modules: dict[str, str] | None = None,
+    go_files: dict[str, list[str]] | None = None,
+    script_aliases: tuple[tuple[str, str, str], ...] = (),
 ) -> dict[str, Any]:
     """
-    Extract edges from a single source file using a single AST parse.
+    Extract edges from a single source file using a single AST parse (``go_modules``: module path -> the folder its
+    go.mod covers, so a Go import of an own package reaches that package's files; ``go_files``: folder -> its Go
+    files, built from all_file_paths when missing).
 
     Args:
         file_path: Relative path to the file within the repo
@@ -475,6 +483,7 @@ def extract_edges_from_file(
         edge_types: Which edge types to extract (default: all)
         ts_manager: Optional TreeSitterManager instance to reuse
         java_files: Optional index of the repository's Java files by name (built from all_file_paths when missing)
+        csharp_namespaces: Optional index of the repository's C# namespaces (without it no using resolves to a file)
 
     Returns:
         Dictionary with:
@@ -518,6 +527,9 @@ def extract_edges_from_file(
         filter_constants = manager.get_filter_constants(file_path=file_path)
         if java_files is None and file_path.endswith(".java") and imports:
             java_files = _java_file_index(all_file_paths)
+        csharp_imports = _csharp_imports(imports, file_path, file_content, csharp_namespaces) if csharp_namespaces and file_path.endswith(".cs") else {}
+        if go_modules and file_path.endswith(".go"):
+            csharp_imports = _go_imports(imports, go_modules, go_files if go_files is not None else _go_file_index(all_file_paths))
 
         # Build lookups once (shared across edge types)
         type_lookup = {t.name: t for t in types}
@@ -535,6 +547,8 @@ def extract_edges_from_file(
                 filter_constants=filter_constants,
                 java_files=java_files,
                 import_roots=import_roots,
+                csharp_imports=csharp_imports,
+                script_aliases=script_aliases,
             )
             edges.extend(import_edges)
             nodes.extend(import_nodes)
@@ -549,7 +563,7 @@ def extract_edges_from_file(
                 repo_name=repo_name,
                 filter_constants=filter_constants,
                 global_method_lookup=global_method_lookup,
-                imported_files=_imported_paths(imports, file_path, all_file_paths, external_packages, filter_constants, java_files, import_roots),
+                imported_files=_imported_paths(imports, file_path, all_file_paths, external_packages, filter_constants, java_files, import_roots, csharp_imports, script_aliases),
                 call_languages=call_languages,
                 scope_of=scope_of,
             )
@@ -661,11 +675,31 @@ def extract_edges_batch(
                 continue
     folders = {str(parent) for path in all_file_paths for parent in PurePosixPath(path).parents if str(parent) != "."}
     roots, unmapped_roots = import_roots(dockerfiles, folders)
+    # Go modules: the module path each go.mod declares, and the folder it covers
+    go_modules: dict[str, str] = {}
+    for f in files:
+        if PurePosixPath(f["path"]).name == "go.mod":
+            text = f.get("content")
+            if text is None:
+                try:
+                    text = (repo_path / f["path"]).read_text(encoding="utf-8", errors="replace")
+                except OSError:
+                    continue
+            if found := re.search(r"^\s*module\s+(\S+)", text, re.MULTILINE):
+                go_modules[found.group(1).strip('"')] = str(PurePosixPath(f["path"]).parent)
+
+    go_files = _go_file_index(all_file_paths) if go_modules else {}
+    # Script import aliases from the tsconfig/jsconfig and bundler configs (read once)
+    alias_configs = {f["path"]: text for f in files if _ALIAS_CONFIG.match(PurePosixPath(f["path"]).name) and (text := _source_text(f, repo_path)) is not None}
+    aliases = script_aliases(alias_configs)
 
     # Filter to only source files that Tree-sitter can parse
     source_files = [f for f in files if f.get("file_type") == "source" and f.get("subtype") in SUPPORTED_LANGUAGES]
 
     total = len(source_files)
+    # C# sources are read once: for the namespace index here and for their edges below
+    csharp_texts = {f["path"]: text for f in source_files if f.get("subtype") == "csharp" and (text := _source_text(f, repo_path)) is not None}
+    csharp_namespaces = _csharp_namespace_index(csharp_texts)
 
     # Reuse single TreeSitterManager instance for all files
     ts_manager = TreeSitterManager()
@@ -678,6 +712,8 @@ def extract_edges_batch(
 
         # Read file content if not provided
         content = file_info.get("content")
+        if content is None:
+            content = csharp_texts.get(file_path)
         if content is None:
             try:
                 full_path = repo_path / file_path
@@ -701,6 +737,10 @@ def extract_edges_batch(
             scope_of=scope_of,
             java_files=java_files,
             import_roots=tuple(roots),
+            csharp_namespaces=csharp_namespaces,
+            go_modules=go_modules,
+            script_aliases=aliases,
+            go_files=go_files,
         )
 
         all_edges.extend(result["data"]["edges"])
@@ -758,6 +798,8 @@ def _extract_import_edges(
     filter_constants: FilterConstants | None = None,
     java_files: dict[str, list[str]] | None = None,
     import_roots: tuple[str, ...] = (),
+    csharp_imports: dict[str, list[str]] | None = None,
+    script_aliases: tuple[tuple[str, str, str], ...] = (),
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, int]]:
     """Extract IMPORTS and USES edges from import statements.
 
@@ -779,8 +821,10 @@ def _extract_import_edges(
         java_files = _java_file_index(all_file_paths)
 
     for imp in imports:
+        if file_path.endswith(".cs") and _csharp_type_alias(imp):
+            continue  # An alias of a built-in or composite type (int, int[], (int, string)) imports nothing
         # from <package> import <module>: the module's own file (and the package for names that are no module)
-        submodules, only_modules = _python_submodules(imp.module, imp.names, file_path, all_file_paths) if imp.is_from_import else ([], False)
+        submodules, only_modules = _direct_targets(imp, file_path, all_file_paths, csharp_imports)
         for target_path in submodules if EdgeType.IMPORTS in edge_types else []:
             target_file_id = generate_file_node_id(repo_name, target_path)
             edges.append(
@@ -805,6 +849,7 @@ def _extract_import_edges(
             java_files=java_files,
             is_from_import=imp.is_from_import,
             import_roots=import_roots,
+            script_aliases=script_aliases,
         )
 
         if resolved["type"] == "internal" and EdgeType.IMPORTS in edge_types:
@@ -827,8 +872,9 @@ def _extract_import_edges(
 
         elif resolved["type"] == "external" and EdgeType.USES in edge_types:
             package_name = resolved["package"]
-            package_slug = package_name.lower().replace("-", "_").replace(".", "_")
-            target_id = f"extdep::{repo_name}::{package_slug}"
+            # The manifests' id rule: a declared package and an imported one are one node
+            target_id = dependency_node_id(repo_name, package_name)
+            package_slug = target_id
 
             edge = {
                 "edge_id": generate_edge_id(source_file_id, target_id, "USES"),
@@ -880,6 +926,8 @@ def _imported_paths(
     filter_constants: FilterConstants | None = None,
     java_files: dict[str, list[str]] | None = None,
     import_roots: tuple[str, ...] = (),
+    csharp_imports: dict[str, list[str]] | None = None,
+    script_aliases: tuple[tuple[str, str, str], ...] = (),
 ) -> set[str]:
     """The repository files a file imports (its internal imports, resolved as the IMPORTS edges are)."""
     stdlib_modules = filter_constants.stdlib_modules if filter_constants else PYTHON_STDLIB
@@ -887,7 +935,7 @@ def _imported_paths(
         java_files = _java_file_index(all_file_paths)
     paths: set[str] = set()
     for imp in imports:
-        submodules, only_modules = _python_submodules(imp.module, imp.names, file_path, all_file_paths) if imp.is_from_import else ([], False)
+        submodules, only_modules = _direct_targets(imp, file_path, all_file_paths, csharp_imports)
         paths.update(submodules)
         if only_modules:
             continue
@@ -901,6 +949,7 @@ def _imported_paths(
             java_files=java_files,
             is_from_import=imp.is_from_import,
             import_roots=import_roots,
+            script_aliases=script_aliases,
         )
         if resolved["type"] == "internal":
             paths.add(resolved["target_path"])
@@ -918,6 +967,8 @@ def _infer_ecosystem(file_path: str) -> str:
         return "maven"
     elif ext == ".cs":
         return "nuget"
+    elif ext == ".go":
+        return "go"
     else:
         return "unknown"
 
@@ -952,16 +1003,20 @@ def _resolve_import(
     java_files: dict[str, list[str]] | None = None,
     is_from_import: bool = False,
     import_roots: tuple[str, ...] = (),
+    script_aliases: tuple[tuple[str, str, str], ...] = (),
 ) -> dict[str, Any]:
     """Resolve an import to determine if it's internal or external.
 
     For Java, ``is_from_import`` marks a static import (as the Java parser records it). ``import_roots``: repository
     folders a deployment puts on the import path; an absolute import nothing else resolves is tried against them.
+    ``script_aliases``: (config folder, prefix, target folder) of the script import aliases (``script_aliases()``).
     """
     # Use provided stdlib or fall back to Python stdlib
     stdlib = stdlib_modules if stdlib_modules else PYTHON_STDLIB
 
     suffix = PurePosixPath(current_file).suffix.lower()
+    if suffix == ".go":
+        return _resolve_go_import(module, external_packages)
     if suffix == ".java":
         return _resolve_java_import(module, names or [], current_file, all_file_paths, stdlib_modules or set(), java_files, is_static=is_from_import)
     if suffix in MEMBER_EXTENSIONS:
@@ -971,6 +1026,8 @@ def _resolve_import(
         if script_target:
             return {"type": "internal", "target_path": script_target}
         return {"type": "unknown", "reason": "relative_not_found"}
+    if suffix in SCRIPT_EXTENSIONS:
+        return _resolve_script_package(module, current_file, all_file_paths, stdlib_modules or set(), script_aliases)
 
     # Handle relative imports
     if module.startswith("."):
@@ -979,8 +1036,13 @@ def _resolve_import(
             return {"type": "internal", "target_path": target_path}
         return {"type": "unknown", "reason": "relative_not_found"}
 
-    # Check if it's a known external package
-    top_level = module.split(".")[0]
+    # Check if it's a known external package: the full module and then its shorter prefixes, longest first, so a dotted
+    # distribution (zope.interface) is matched as declared before its top-level name alone
+    parts = module.split(".")
+    for size in range(len(parts), 1, -1):
+        if (declared := ".".join(parts[:size])) in external_packages:
+            return {"type": "external", "package": declared}
+    top_level = parts[0]
     if top_level in external_packages:
         return {"type": "external", "package": top_level}
 
@@ -1000,6 +1062,114 @@ def _resolve_import(
 
     # Could be external package not in our list
     return {"type": "external", "package": top_level}
+
+
+def _go_file_index(all_file_paths: set[str]) -> dict[str, list[str]]:
+    """Folder -> its Go files without the test files, sorted: the files of the package in that folder."""
+    index: dict[str, list[str]] = defaultdict(list)
+    for path in sorted(all_file_paths):
+        if path.endswith(".go") and not path.endswith("_test.go"):
+            index[str(PurePosixPath(path).parent)].append(path)
+    return dict(index)
+
+
+def _go_imports(imports: list[ExtractedImport], go_modules: dict[str, str], go_files: dict[str, list[str]]) -> dict[str, list[str]]:
+    """Import path -> the files of the own package it names (the longest module path it starts with, then the folder
+    under that module's go.mod; test files left out). A path of an own module whose folder holds no file stays an own
+    import with no file: it is no external package."""
+    out: dict[str, list[str]] = {}
+    for imp in imports:
+        module = max((m for m in go_modules if imp.module == m or imp.module.startswith(m + "/")), key=len, default=None)
+        if module is None:
+            continue
+        folder = str(PurePosixPath(go_modules[module], imp.module[len(module) :].lstrip("/")))
+        out[imp.module] = list(go_files.get(folder, []))
+    return out
+
+
+def _resolve_go_import(module: str, external_packages: set[str]) -> dict[str, Any]:
+    """A Go import that is no own package: the standard library when its first element has no dot (net/http), else the
+    external module that holds it, the longest declared module path it starts with or the whole path. The declared
+    paths are normalized as every known package is (lower case, "-" as "_"), so the import is compared the same way."""
+    if "." not in module.split("/")[0]:
+        return {"type": "stdlib", "module": module}
+    normalized = module.lower().replace("-", "_")
+    declared = max((p for p in external_packages if normalized == p or normalized.startswith(p + "/")), key=len, default=None)
+    return {"type": "external", "package": declared or module}
+
+
+_CSHARP_NAMESPACE = re.compile(r"^\s*namespace\s+([\w.]+)", re.MULTILINE)
+# The using and namespace directives of a C# file, up to their ";" or "{": the names in them are no uses of a type, code
+# after them on the same line is. A using directive is one path, or an alias of one, before ";": a using declaration or
+# statement in a method (using var x = ..., using (var x = ...), using StreamReader r = ...) is code
+_CSHARP_DIRECTIVE = re.compile(
+    r"^\s*(?:(?:global\s+)?using\s+(?:static\s+)?(?!var\b)[\w.:]+\s*(?:=\s*[^;\n]*)?;|namespace\s+[\w.]+\s*[;{]?)",
+    re.MULTILINE,
+)
+
+
+# A namespace or type path an alias can name (A.B, A.B.C<int>, global::A.B); other targets are types, no imports
+# A segment starts with a letter of any script or an underscore ([^\W\d] is a Unicode letter or _)
+_CSHARP_PATH = re.compile(r"(?:global::)?[^\W\d]\w*(?:\.[^\W\d]\w*)*(?:<.*>)?")
+# The language's built-in type keywords (C# reference, built-in types)
+_CSHARP_BUILT_IN = frozenset(
+    {"bool", "byte", "sbyte", "char", "decimal", "double", "float", "int", "uint", "nint", "nuint", "long", "ulong", "short", "ushort", "object", "string", "dynamic"}
+)
+
+
+def _csharp_type_alias(imp: ExtractedImport) -> bool:
+    """An alias using of a built-in or composite type (``using Number = int;``, ``using Pair = (int, string);``)."""
+    return bool(imp.alias) and (imp.module in _CSHARP_BUILT_IN or not _CSHARP_PATH.fullmatch(imp.module))
+
+
+def _source_text(file_info: dict[str, Any], repo_path: Path) -> str | None:
+    """A source file's text, as given or from the checkout; None when it cannot be read."""
+    content = file_info.get("content")
+    if content is not None:
+        return content
+    try:
+        return (repo_path / file_info["path"]).read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+
+
+def _csharp_namespace_index(sources: dict[str, str]) -> dict[str, list[str]]:
+    """Every namespace the repository's C# files declare, and each namespace above one, -> the files declaring it."""
+    index: dict[str, list[str]] = {}
+    for path, text in sorted(sources.items()):
+        for namespace in _CSHARP_NAMESPACE.findall(text):
+            parts = namespace.split(".")
+            for depth in range(1, len(parts)):
+                index.setdefault(".".join(parts[:depth]), [])
+            index.setdefault(namespace, []).append(path)
+    return index
+
+
+def _csharp_imports(imports: list[ExtractedImport], file_path: str, file_content: str, namespaces: dict[str, list[str]]) -> dict[str, list[str]]:
+    """The usings of the repository's own namespaces -> the files they reach: of a namespace the files whose type (the
+    file's name, by the language's convention) this file names outside its using and namespace lines, of a
+    ``using static`` or an alias of a type that type's file."""
+    named = set(re.findall(r"\w+", _CSHARP_DIRECTIVE.sub("", file_content)))
+    stem = lambda path: PurePosixPath(path).name.split(".")[0]  # noqa: E731 - a one-line helper
+    found: dict[str, list[str]] = {}
+    for imp in imports:
+        # global:: names the root namespace explicitly: global::Acme.Core is Acme.Core
+        module = imp.module.removeprefix("global::")
+        if module in namespaces:
+            found[imp.module] = [p for p in namespaces[module] if p != file_path and stem(p) in named]
+        elif imp.is_from_import or imp.alias:
+            outer, _, type_name = module.rpartition(".")
+            if targets := [p for p in namespaces.get(outer, []) if stem(p) == type_name]:
+                found[imp.module] = targets
+    return found
+
+
+def _direct_targets(imp: ExtractedImport, file_path: str, all_file_paths: set[str], csharp_imports: dict[str, list[str]] | None) -> tuple[list[str], bool]:
+    """The files an import reaches before any module lookup, and whether that settles it: a C# using of an own
+    namespace, the module files of a Python ``from`` import."""
+    if csharp_imports and imp.module in csharp_imports:
+        return csharp_imports[imp.module], True
+    return _python_submodules(imp.module, imp.names, file_path, all_file_paths) if imp.is_from_import else ([], False)
 
 
 def _java_file_index(all_file_paths: set[str]) -> dict[str, list[str]]:
@@ -1095,11 +1265,99 @@ def _resolve_script_import(module: str, current_file: str, all_file_paths: set[s
             resolved = resolved[:-1]
         elif part not in (".", ""):
             resolved.append(part)
-    base = "/".join(resolved)
+    return _script_file("/".join(resolved), all_file_paths)
+
+
+def _script_file(base: str, all_file_paths: set[str]) -> str | None:
+    """The script a path names: itself, with any script extension, or its directory's index file."""
     for candidate in (base, *(base + ext for ext in SCRIPT_EXTENSIONS), *(f"{base}/index{ext}" for ext in SCRIPT_EXTENSIONS)):
         if candidate in all_file_paths:
             return candidate
     return None
+
+
+def _resolve_script_package(module: str, current_file: str, all_file_paths: set[str], stdlib: set[str], aliases: tuple[tuple[str, str, str], ...]) -> dict[str, Any]:
+    """A bare JavaScript or TypeScript import. Through an alias of the nearest config folder that holds the file it is
+    the repository file the alias leads to; a file the path itself names stays one; a specifier shaped like an alias
+    (@/..., ~/..., #...) without one is own code that cannot be placed (no dependency); any other names its package,
+    the first segment or two for a scoped one (aws-cdk-lib/aws-s3 is aws-cdk-lib, @scope/pkg/sub is @scope/pkg)."""
+    current = PurePosixPath(current_file)
+    below = [a for a in aliases if not a[0] or current.is_relative_to(a[0])]
+    for _, prefix, target in sorted(below, key=lambda a: (-len(PurePosixPath(a[0]).parts) if a[0] else 0, -len(a[1]))):
+        if module.startswith(prefix) if prefix.endswith("/") else module == prefix:
+            found = _script_file(target + module[len(prefix) :], all_file_paths)
+            return {"type": "internal", "target_path": found} if found else {"type": "unknown", "reason": "alias_not_found"}
+    if target_path := _resolve_absolute_import(module, all_file_paths):
+        return {"type": "internal", "target_path": target_path}
+    first = module.split("/", 1)[0]
+    if first in ("@", "~") or first.startswith("#"):
+        return {"type": "unknown", "reason": "alias_unresolved"}
+    bare = module.removeprefix("node:")
+    parts = bare.split("/")
+    package = "/".join(parts[:2]) if bare.startswith("@") and len(parts) > 1 else parts[0]
+    if module.startswith("node:") or package in stdlib:
+        return {"type": "stdlib", "module": package}
+    return {"type": "external", "package": package}
+
+
+# Script import aliases: tsconfig/jsconfig ``paths`` and bundler aliases (vite, webpack, vue)
+_ALIAS_CONFIG = re.compile(r"^(?:[tj]sconfig[\w.-]*\.json|(?:vite|webpack|vue)\.config\.[cm]?[jt]s)$", re.IGNORECASE)
+_SCRIPT_COMMENT = re.compile(r'"(?:[^"\\\n]|\\.)*"|//[^\n]*|/\*.*?\*/', re.DOTALL)
+# A path a bundler alias leads to, as a literal or through path.resolve/join(__dirname, ...) or new URL(...)
+_ALIAS_PATH = r"""(?:path\.(?:resolve|join)\(\s*__dirname\s*,\s*|fileURLToPath\(\s*new\s+URL\(\s*)?['"](?P<path>[^'"]+)['"]"""
+_OBJECT_ALIAS = re.compile(r"""(?:['"](?P<qkey>[^'"]+)['"]|(?P<key>[@~#][\w-]*))\s*:\s*""" + _ALIAS_PATH)
+_FIND_ALIAS = re.compile(r"""find\s*:\s*['"](?P<qkey>[^'"]+)['"]\s*,\s*replacement\s*:\s*""" + _ALIAS_PATH)
+
+
+def _alias_target(folder: str, path: str) -> str:
+    """A folder an alias leads to, from its config's folder, as a prefix ending in "/" ("" for the repository root)."""
+    joined = PurePosixPath(folder, path.lstrip("/")) if folder else PurePosixPath(path.lstrip("/"))
+    parts: list[str] = []
+    for part in joined.parts:
+        if part == "..":
+            parts = parts[:-1]
+        elif part not in (".", ""):
+            parts.append(part)
+    return "/".join(parts) + "/" if parts else ""
+
+
+def script_aliases(configs: dict[str, str]) -> tuple[tuple[str, str, str], ...]:
+    """(config folder, import prefix, target folder) per script import alias the configs declare: a tsconfig or
+    jsconfig ``compilerOptions.paths`` entry ``"@/*": ["src/*"]`` (from ``baseUrl``; comments and trailing commas
+    allowed), and a bundler alias after ``alias`` (``'@': path.resolve(__dirname, './src')`` or ``{find: '@',
+    replacement: ...}``). An alias applies to the files below its config's folder. An exact ``paths`` entry
+    (``"jquery": ["vendor/jquery/dist/jquery"]``) has no trailing "/" on its prefix and target: it matches only that
+    specifier and leads to the path itself."""
+    found: set[tuple[str, str, str]] = set()
+    for path, text in configs.items():
+        folder = str(PurePosixPath(path).parent)
+        folder = "" if folder == "." else folder
+        name = PurePosixPath(path).name.lower()
+        if name.endswith(".json"):
+            cleaned = re.sub(r",(\s*[}\]])", r"\1", _SCRIPT_COMMENT.sub(lambda m: m.group(0) if m.group(0).startswith('"') else "", text))
+            try:
+                options = (json.loads(cleaned) or {}).get("compilerOptions") or {}
+            except ValueError, AttributeError:
+                continue
+            base = str(options.get("baseUrl") or ".")
+            for key, targets in (options.get("paths") or {}).items():
+                if not (isinstance(key, str) and key and isinstance(targets, list) and targets and isinstance(targets[0], str)):
+                    continue
+                target = targets[0]
+                if key.endswith("/*") and (target == "*" or target.endswith("/*")) and "*" not in target[:-1]:
+                    found.add((folder, key[:-1], _alias_target(folder, f"{base}/{target[:-1]}")))
+                elif "*" not in key and "*" not in target and (exact := _alias_target(folder, f"{base}/{target}").rstrip("/")):
+                    found.add((folder, key, exact))
+            continue
+        at = text.find("alias")
+        if at < 0:
+            continue
+        for pattern in (_FIND_ALIAS, _OBJECT_ALIAS):
+            for match in pattern.finditer(text, at):
+                key = match.group("qkey") or match.groupdict().get("key") or ""
+                if key and not key.startswith(".") and "/" not in key.rstrip("/"):
+                    found.add((folder, key.rstrip("/") + "/", _alias_target(folder, match.group("path"))))
+    return tuple(sorted(found))
 
 
 def _resolve_relative_import(

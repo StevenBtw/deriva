@@ -79,11 +79,16 @@ def _prose_sentences(doc: Any, settings: Settings) -> set[int]:
     return kept
 
 
+def _nouns(lang: str, settings: Settings) -> tuple[str, ...]:
+    return ("NOUN", "PROPN") if lang == "en" and settings.noun_proper else ("NOUN",)
+
+
 def _noun_phrases(doc: Any, lang: str, segment: int, settings: Settings, keep_surface: frozenset[str], kept: set[int]) -> list[Occurrence]:
     out = []
+    nouns = _nouns(lang, settings)
     for chunk in doc.noun_chunks:
         root = chunk.root
-        if root.sent.start not in kept or root.pos_ != "NOUN" or not _valid(root):
+        if root.sent.start not in kept or root.pos_ not in nouns or not _valid(root):
             continue
         following = _next_token(doc, root.i)
         if following is not None and following.like_num:
@@ -104,7 +109,10 @@ def _noun_phrases(doc: Any, lang: str, segment: int, settings: Settings, keep_su
         i = root.i - 1
         while i >= chunk.start and len(tokens) < settings.max_noun_tokens:
             token = doc[i]
-            if token.pos_ != "NOUN" or not _valid(token):
+            if lang == "en" and settings.noun_hyphens and token.text == "-":
+                i -= 1
+                continue
+            if token.pos_ not in nouns or not _valid(token):
                 break
             tokens.insert(0, token)
             i -= 1
@@ -135,19 +143,42 @@ def _verb_objects(verb: Any, lang: str) -> tuple[list[str], list[Any]]:
 def _verb_phrases(doc: Any, lang: str, segment: int, settings: Settings, keep_surface: frozenset[str], kept: set[int]) -> list[Occurrence]:
     out = []
     stop = STOP_WORDS[lang]
+    nouns = _nouns(lang, settings)
+    prepositions = settings.verb_prepositions if lang == "en" else ()
+
+    def leading(token: Any) -> bool:
+        # An imperative heading the tagger reads as a noun: "Inspect your first machine"
+        return (
+            lang == "en"
+            and settings.leading_verbs
+            and token.pos_ in ("NOUN", "PROPN")
+            and token.dep_ == "ROOT"
+            and token.i == token.sent.start
+            and any(c.dep_ == "dobj" or (c.dep_ == "prep" and c.lower_ in prepositions) for c in token.children)
+        )
+
     for verb in doc:
-        if verb.pos_ != "VERB" or verb.sent.start not in kept:
+        if (verb.pos_ != "VERB" and not leading(verb)) or verb.sent.start not in kept:
             continue
         lemma = verb.lemma_.lower()
         if not lemma.isalpha() or len(lemma) < 2 or lemma in stop or CAMEL.search(verb.text):
             continue
         verb_words, objects = _verb_objects(verb, lang)
-        for obj in objects:
-            if obj.pos_ != "NOUN" or not _valid(obj):
+        linked = [(obj, verb_words) for obj in objects]
+        linked += [
+            (obj, [*verb_words, prep.lower_])
+            for prep in verb.children
+            if prep.dep_ == "prep" and prep.lower_ in prepositions
+            for pobj in prep.children
+            if pobj.dep_ == "pobj"
+            for obj in (pobj, *(c for c in pobj.children if c.dep_ == "conj"))
+        ]
+        for obj, verb_words in linked:
+            if obj.pos_ not in nouns or not _valid(obj):
                 continue
             obj_tokens = [obj]
             if lang == "en":
-                compounds = [c for c in obj.children if c.dep_ == "compound" and c.i == obj.i - 1 and c.pos_ == "NOUN" and _valid(c)]
+                compounds = [c for c in obj.children if c.dep_ == "compound" and c.i == obj.i - 1 and c.pos_ in nouns and _valid(c)]
                 obj_tokens = (compounds + obj_tokens)[-settings.max_object_tokens :]
             obj_words = [_noun_form(t, lang, keep_surface) for t in obj_tokens]
             obj_surface = " ".join(t.text for t in obj_tokens)

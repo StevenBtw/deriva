@@ -4,25 +4,18 @@ ApplicationComponent Derivation.
 An ApplicationComponent represents a modular, deployable part of a system
 that encapsulates its behavior and data.
 
-Graph signals:
-- Directory nodes (structural organization)
-- Louvain community roots (cohesive modules)
-- High PageRank (important/central directories)
-- Path patterns: src/, app/, lib/, components/, modules/
-
-Filtering strategy:
-1. Query Directory nodes (excluding test/config/docs)
-2. Get enrichment data (pagerank, louvain, kcore)
-3. Filter to community roots or high-pagerank nodes
-4. Limit to top N by PageRank
-5. Send to LLM for final decision and naming
+Which components exist comes from structure: the step's graph query (versioned config) selects the
+deployable units and build modules, leaving out environment variants and infrastructure, test and
+tooling modules. Each candidate becomes one element named from structure: one structural name stays,
+and from several name candidates (manifest, documentation, folder) an LLM call only chooses one
+(``params.naming.choose_instruction``); it never decides whether the element exists.
 
 ArchiMate Layer: Application Layer
 ArchiMate Type: ApplicationComponent
 
 Typical Sources:
-    - Directory nodes with src/, app/, lib/ paths
-    - Louvain community root nodes (cohesive module boundaries)
+    - DeployableUnit nodes (services, applications, mainframe programs)
+    - BuildModule nodes (modules a build manifest declares)
 """
 
 from __future__ import annotations
@@ -39,10 +32,9 @@ class ApplicationComponentDerivation(HybridDerivation):
     """
     ApplicationComponent element derivation.
 
-    Uses hybrid filtering with emphasis on graph structure:
-    - Prioritizes community roots (natural component boundaries)
-    - High PageRank nodes (important directories)
-    - Optional pattern filtering from config
+    Which components exist comes from the step's graph query (see the module docstring). The filter settings below
+    (community roots, PageRank, patterns from config) apply only to candidates without a structural role; the shipped
+    role rule gives every candidate one, so they do not decide anything there.
     """
 
     ELEMENT_TYPE = "ApplicationComponent"

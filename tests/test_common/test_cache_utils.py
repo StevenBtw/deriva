@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import pickle
 
 import pytest
@@ -416,4 +417,58 @@ def test_two_caches_on_one_folder_share_it(tmp_path):
     second.set("j", {"answer": 2})
     assert second.get("j") == {"answer": 2}
     second.close()
-    assert BaseDiskCache(tmp_path / "shared").get("j") == {"answer": 2}
+    with BaseDiskCache(tmp_path / "shared") as reopened:  # closed again, so no environment stays open after the test
+        assert reopened.get("j") == {"answer": 2}
+
+
+class _FakeEnvironment:
+    """An lmdb environment that records whether open_db ran under the environments lock, and can fail one name."""
+
+    def __init__(self, fail: bytes | None = None):
+        from deriva.common import cache_utils
+
+        self._lock = cache_utils._ENVIRONMENTS_LOCK
+        self.fail = fail
+        self.opened: list[tuple[bytes, bool]] = []
+        self.closed = False
+
+    def open_db(self, name: bytes, **_: object) -> bytes:
+        import lmdb
+
+        self.opened.append((name, self._lock.locked()))
+        if name == self.fail:
+            raise lmdb.Error("cannot open the database")
+        return name
+
+    def close(self) -> None:
+        self.closed = True
+
+
+def test_a_store_opens_its_databases_under_the_environments_lock(tmp_path, monkeypatch):
+    """lmdb wants mdb_dbi_open serialized on one environment: a store opening and a measurement (cache_contents,
+    under the lock) must not run it at the same time, so a store opens its two databases while it holds the lock."""
+    from deriva.common import cache_utils
+
+    env = _FakeEnvironment()
+    monkeypatch.setattr(cache_utils.lmdb, "open", lambda *a, **k: env)
+
+    store = cache_utils._LmdbStore(tmp_path / "cache", 1024)
+    store.close()
+
+    assert env.opened == [(b"entries", True), (b"meta", True)] and env.closed
+
+
+def test_a_store_whose_database_cannot_open_releases_its_share_of_the_environment(tmp_path, monkeypatch):
+    """A failed open holds no file: the store's share goes, and the environment closes when no other store has it."""
+    import lmdb
+
+    from deriva.common import cache_utils
+
+    env = _FakeEnvironment(fail=b"meta")
+    monkeypatch.setattr(cache_utils.lmdb, "open", lambda *a, **k: env)
+
+    folder = tmp_path / "cache"
+    with pytest.raises(lmdb.Error):
+        cache_utils._LmdbStore(folder, 1024)
+
+    assert env.closed and os.path.normcase(str(folder.resolve())) not in cache_utils._ENVIRONMENTS

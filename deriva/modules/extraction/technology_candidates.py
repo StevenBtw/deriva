@@ -27,7 +27,11 @@ from deriva.common.naming import contains_name, name_key
 
 from .base import current_timestamp, generate_edge_id, generate_file_node_id
 from .external_dependency import parse_requirement_line
+from .technologies import image_name
 
+IMPORTED_KIND = "imported library"
+# The kinds a package manifest declares: the ones an imported library can be
+_LIBRARY_KINDS = frozenset({"maven library", "npm library", "python library", "go module", "php library", "ruby gem", "rust crate"})
 CATEGORIES = ("system_software", "service", "infrastructure", "platform", "network", "security")
 LABELS = (*CATEGORIES, "none")
 
@@ -291,6 +295,14 @@ def _own_module_service(text: str, kind: str, own_units: frozenset[str]) -> bool
     return ":" in reference and name_key(reference.rsplit(":", 1)[1]) in own_units
 
 
+def _own_module_image(text: str, file_type: str, subtype: str, own_units: frozenset[str]) -> bool:
+    """An image a deployment manifest runs that is named like one of the repository's own modules (its last path segment,
+    without tag or digest): the module's own build. A container file's base image is never one."""
+    if not own_units or (file_type, subtype) != ("infra", "kubernetes"):
+        return False
+    return name_key(text.split("@", 1)[0].rsplit("/", 1)[-1].split(":", 1)[0]) in own_units
+
+
 def _names_repository(text: str, kind: str, repository_name: str) -> bool:
     """An item named after the repository, or a compose service running an image named after it: the software itself."""
     if not repository_name:
@@ -304,13 +316,47 @@ def item_key(text: str, kind: str) -> str:
     return f"{kind.split(',')[0]}::{text.casefold()}"
 
 
+def _item_image(item: TechnologyItem) -> str | None:
+    """The container image an item names (a container image itself, a compose service's image), as ``image_name`` writes it."""
+    kind = item.kind.split(",")[0]
+    if kind == "container image":
+        return image_name(item.text) or None
+    # The kind lists its parts with ", " between them: the image ends before a comma
+    found = re.search(r"(?:^|, )image ([^\s,]+)", item.kind) if kind == "compose service" else None
+    return (image_name(found.group(1)) or None) if found else None
+
+
+def image_labels(labels: dict[str, dict[str, str]], collected: Collected) -> dict[str, str]:
+    """Image -> the system its label names ("" for an image labelled none), for every labelled item that names a
+    container image; the first label in key order wins. A label with a category but no system names nothing: the image
+    keeps its own name. The deployments read it to name the software an image runs."""
+    out: dict[str, str] = {}
+    for key in sorted(labels):
+        item = collected.items.get(key)
+        image = _item_image(item) if item else None
+        label = labels[key]
+        system = "" if label["category"] == "none" else label["system"].strip()
+        if image and image not in out and (system or label["category"] == "none"):
+            out[image] = system
+    return out
+
+
 def technology_node_id(repo_name: str, tech_name: str) -> str:
     """Graph id of a technology: one id for every spelling of its name (canonical name key)."""
     return f"tech::{repo_name}::{name_key(tech_name)}"
 
 
-def collect(files: list[dict[str, Any]], platforms: list[dict[str, str]], own_units: frozenset[str] = frozenset(), repository_name: str = "") -> Collected:
+def collect(
+    files: list[dict[str, Any]],
+    platforms: list[dict[str, str]],
+    own_units: frozenset[str] = frozenset(),
+    repository_name: str = "",
+    imported: dict[str, set[str]] | None = None,
+) -> Collected:
     """The items the files declare and the platforms their types imply (platforms: the step's params table).
+
+    ``imported`` holds the libraries the source imports with the files that do: a repository without a manifest declares
+    nothing, so what it runs on shows only there. A library also declared stays that one item, with these files added.
 
     A compose service that is one of the repository's own modules (``own_units``, name keys) is no item, and with
     ``repository_name`` neither is an item named after the repository (an image, a library, a service running such
@@ -323,11 +369,20 @@ def collect(files: list[dict[str, Any]], platforms: list[dict[str, str]], own_un
         if platform:
             collected.platforms.setdefault(platform, set()).add(f["path"])
         for text, kind in items_from_file(f["path"], f["content"], f["file_type"], f.get("subtype")):
-            if _own_module_service(text, kind, own_units) or _names_repository(text, kind, repository_name):
+            own = _own_module_service(text, kind, own_units) or _own_module_image(text, f["file_type"], f.get("subtype") or "", own_units)
+            if own or _names_repository(text, kind, repository_name):
                 continue
             key = item_key(text, kind)
             collected.items.setdefault(key, TechnologyItem(key, text, kind))
             collected.declared.setdefault(key, set()).add(f["path"])
+    # An import joins a library a manifest declares (tree_sitter is tree-sitter), never an image, a service or a variable
+    by_name = {name_key(item.text): key for key, item in collected.items.items() if item.kind.split(",")[0] in _LIBRARY_KINDS}
+    for text, paths in sorted((imported or {}).items()):
+        if _names_repository(text, IMPORTED_KIND, repository_name):
+            continue
+        key = by_name.get(name_key(text)) or item_key(text, IMPORTED_KIND)
+        collected.items.setdefault(key, TechnologyItem(key, text, IMPORTED_KIND))
+        collected.declared.setdefault(key, set()).update(paths)
     return collected
 
 

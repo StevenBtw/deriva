@@ -57,3 +57,17 @@ describe("BottomPanel errors", () => {
     expect(screen.getByText("No errors in this run.")).toBeInTheDocument();
   });
 });
+
+
+describe("BottomPanel live log", () => {
+  beforeEach(() => {
+    vi.mocked(runs.calls).mockResolvedValue([]);
+  });
+
+  it("names the phase on the line that closes it (its step is empty)", () => {
+    const close: RunEvent = { seq: 2, event: "progress", data: { phase: "derivation", step: "", status: "complete", current: 30, total: 30, message: "5 elements, 4 relationships in the model" } };
+    render(<BottomPanel events={[close]} status="" runId="r1" runStatus="finished" tab="live" onTab={() => {}} />);
+
+    expect(screen.getByText("✓ derivation (30/30) · 5 elements, 4 relationships in the model")).toBeInTheDocument();
+  });
+});

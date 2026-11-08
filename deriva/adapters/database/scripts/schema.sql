@@ -46,8 +46,8 @@ CREATE TABLE IF NOT EXISTS derivation_config (
     sequence INTEGER NOT NULL DEFAULT 0,
     enabled BOOLEAN DEFAULT FALSE,
     llm BOOLEAN DEFAULT TRUE,                -- TRUE = uses LLM, FALSE = pure graph algorithm
-    input_graph_query TEXT,                  -- Cypher for Graph namespace (nodes/edges)
-    input_model_query TEXT,                  -- Cypher for Model namespace (elements/relationships)
+    input_graph_query TEXT,                  -- Query for Graph namespace (nodes/edges)
+    input_model_query TEXT,                  -- Query for Model namespace (elements/relationships)
     instruction TEXT,                        -- LLM prompt (for llm=TRUE steps)
     example TEXT,                            -- LLM example output (for llm=TRUE steps)
     params TEXT,                             -- JSON parameters (for llm=FALSE steps, e.g., {"k": 2})

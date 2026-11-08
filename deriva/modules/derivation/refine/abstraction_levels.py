@@ -6,7 +6,8 @@ modules and units -> nested modules), and hands an interface to the module it li
 several modules (the module composes it instead of the unit). The services of a unit split into feature packages
 are realized by the packages' functions (``levels.split_realizations``). A Composition against the hierarchy (a unit
 composing the module that holds it) is removed. Before the joint selection it also draws the enterprise viewpoint: the
-relationships between enterprise elements that the metamodel's valid derivation rules derive from direct
+relationships between enterprise elements that the metamodel's enterprise derivation rules (the valid ones and
+potential rule PDR 5, for this viewpoint only) derive from direct
 relationships, for the patterns of a versioned table (``levels.enterprise_derivations``). Structural only: the
 hierarchy comes from the folders of the components' sources (deployable units, build modules), the levels per type
 and the viewpoint from the step's params. No LLM call.
@@ -125,7 +126,7 @@ class AbstractionLevelsStep:
                 or removing nothing (for a step after it); ``enterprise_patterns`` (optional, structure stage): the
                 enterprise viewpoint, Deriva's closed table of what the enterprise level draws, as [source type,
                 relationship type, target type] triples. A relationship between two enterprise elements is drawn
-                only for a pattern of the table, and only where the metamodel's valid derivation rules derive it
+                only for a pattern of the table, and only where the metamodel's enterprise derivation rules (valid ones and PDR 5) derive it
                 from a chain of direct relationships (one per pair, the weaker structural type). The user extends
                 the table; an empty or missing table draws nothing
         """
@@ -259,14 +260,14 @@ class AbstractionLevelsStep:
         archimate_manager: ArchimateManager, elements: list[Any], levels: dict[str, frozenset[str]], patterns: list[tuple[str, str, str]]
     ) -> list[tuple[str, str, str, tuple[str, ...], tuple[str, ...]]]:
         """The enterprise viewpoint's relationships, derived from the model's direct ones (``levels.enterprise_derivations``)
-        with the metamodel's tiers and valid derivation rules."""
+        with the metamodel's tiers and enterprise derivation rules (valid ones and PDR 5)."""
         metamodel = archimate_manager.metamodel
         return enterprise_derivations(
             [(r.identifier, r.source, r.relationship_type, r.target) for r in archimate_manager.get_relationships()],
             levels,
             {e.identifier: e.element_type for e in elements},
             patterns,
-            metamodel.derivation_rules,
+            metamodel.enterprise_derivation_rules,
             metamodel.structural_strength,
             metamodel.tier,
         )

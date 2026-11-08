@@ -135,7 +135,7 @@ class TestComputeDeviationStats:
 
         result = compute_deviation_stats("test", "extraction", objects_by_run)
 
-        assert result.consistency_score == 1.0
+        assert result.consistency_score is None  # No object in any run: not measured
         assert result.total_objects == 0
 
     def test_limits_object_lists(self):
@@ -322,12 +322,27 @@ class TestGenerateRecommendations:
         assert len(result) == 1
         assert "No immediate action needed" in result[0]
 
-    def test_empty_deviations_gives_positive_message(self):
-        """Empty deviations list should give positive message."""
-        result = generate_recommendations([])
+    def test_nothing_measured_says_so_instead_of_good_consistency(self):
+        """No deviation, or only unmeasured ones, is no evidence of good consistency."""
+        unmeasured = ConfigDeviation(config_type="derivation", config_id="Step", deviation_count=0, total_objects=2, consistency_score=None)
 
-        assert len(result) == 1
-        assert "good consistency" in result[0]
+        for deviations in ([], [unmeasured]):
+            [message] = generate_recommendations(deviations)
+            assert "No config was measured" in message
+
+    def test_measured_configs_without_issues_give_the_positive_message(self):
+        good = ConfigDeviation(config_type="derivation", config_id="Step", deviation_count=0, total_objects=2, consistency_score=1.0)
+
+        assert generate_recommendations([good]) == ["All measured configs show good consistency (>80%). No immediate action needed."]
+
+    def test_the_report_s_overall_consistency_counts_only_measured_configs(self):
+        from deriva.modules.analysis.deviation import build_deviation_report, compute_deviation_stats
+
+        one_run = compute_deviation_stats("A", "derivation", {"run1": {"a", "b"}})
+        two_runs = compute_deviation_stats("B", "derivation", {"run1": {"a", "b"}, "run2": {"a"}})
+
+        assert build_deviation_report("s", "t", 1, [one_run]).overall_consistency is None
+        assert build_deviation_report("s", "t", 3, [one_run, two_runs]).overall_consistency == 0.5
 
 
 class TestBuildDeviationReport:
@@ -394,5 +409,5 @@ class TestBuildDeviationReport:
         report = build_deviation_report("sess", "2024-01-01", 3, [])
 
         assert report.total_deviations == 0
-        assert report.overall_consistency == 1.0
+        assert report.overall_consistency is None
         assert report.config_deviations == []

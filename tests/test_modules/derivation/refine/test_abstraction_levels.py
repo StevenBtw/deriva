@@ -115,6 +115,7 @@ def test_an_interface_in_one_built_module_is_composed_by_that_module_instead_of_
 
     result = run_refine_step("abstraction_levels", archimate_manager=am, graph_manager=graph, params=PARAMS)
 
+    assert result.report is not None
     assert result.success and result.report["interfaces_moved"] == 1
     compositions = {(r.source, r.target): r for r in am.get_relationships() if r.relationship_type == "Composition"}
     assert ("ac_unit", "ai_web") not in compositions
@@ -123,6 +124,7 @@ def test_an_interface_in_one_built_module_is_composed_by_that_module_instead_of_
     assert ("ac_unit", "ai_cli") in compositions
     # Run again: nothing moves twice
     again = run_refine_step("abstraction_levels", archimate_manager=am, graph_manager=graph, params=PARAMS)
+    assert again.report is not None
     assert again.report["interfaces_moved"] == 0 and again.relationships_created == 0
 
 
@@ -141,6 +143,7 @@ def test_a_roll_up_replaces_the_reverse_composition_so_no_two_components_compose
     result = run_refine_step("abstraction_levels", archimate_manager=am, graph_manager=graph, params=PARAMS)
 
     assert [(r.source, r.relationship_type, r.target) for r in am.get_relationships()] == [("ac_mod", "Composition", "ac_unit")]
+    assert result.report is not None
     assert result.report["reversed"] == 1
 
 
@@ -159,6 +162,7 @@ def test_the_only_unit_at_a_module_folder_composes_the_module_and_containment_ag
     result = run_refine_step("abstraction_levels", archimate_manager=am, graph_manager=graph, params=PARAMS)
 
     assert [(r.source, r.relationship_type, r.target, r.identifier) for r in am.get_relationships()] == [("ac_unit", "Composition", "ac_mod", "rel-x")]
+    assert result.report is not None
     assert result.report["reversed"] == 0 and result.relationships_created == 0
     levels = {e.identifier: e.properties.get("levels") for e in am.get_elements()}
     assert levels == {"ac_unit": ["enterprise", "solution"], "ac_mod": ["solution"]}
@@ -182,6 +186,7 @@ def test_a_composition_from_a_component_to_one_of_its_ancestors_is_removed(am):
 
     compositions = sorted((r.source, r.target) for r in am.get_relationships() if r.relationship_type == "Composition")
     assert compositions == [("ac_mod", "ac_unit"), ("ac_mod", "ac_unit2"), ("ac_sys", "ac_mod")]
+    assert result.report is not None
     assert result.report["reversed"] == 1
 
 
@@ -203,6 +208,7 @@ def test_only_the_hierarchy_composes_one_component_into_another(am):
 
     compositions = sorted((r.source, r.target) for r in am.get_relationships() if r.relationship_type == "Composition")
     assert compositions == [("ac_mod", "ac_src"), ("ac_unit", "ac_mod")]
+    assert result.report is not None
     assert result.report["reversed"] == 1
 
 
@@ -248,6 +254,7 @@ def test_the_structure_stage_draws_the_viewpoint_from_a_direct_chain_through_the
     derived = [(r.source, r.relationship_type, r.target, r.properties["levels"]) for r in _derived(am)]
     assert derived == [("ac_a", "Serving", "ac_b", ["enterprise"])]
     assert sorted(_derived(am)[0].properties["derivedFrom"]) == sorted(chain) and "DR 4" in _derived(am)[0].properties["derivationRules"]
+    assert result.report is not None
     assert result.report["derived"] == 1
 
     am.clear_model()
@@ -338,6 +345,7 @@ def test_abstraction_hierarchy_is_the_structure_stage_under_its_own_name(am):
 
     result = run_refine_step("abstraction_hierarchy", archimate_manager=am, graph_manager=graph, params={**PARAMS, **SERVING})
 
+    assert result.report is not None
     assert result.success and result.step_name == "abstraction_hierarchy" and result.report["stage"] == "structure" and result.report["derived"] == 1
 
 

@@ -191,7 +191,7 @@ def run_classification(
         file_paths = extraction.list_repo_files(repo_path, config.get_excluded_directories(engine))
 
         # Classify files
-        result = classification.classify_files(file_paths, registry_list)
+        result = classification.classify_files(file_paths, registry_list, extraction.model_files(repo_path, file_paths))
 
         stats["files_classified"] += len(result["classified"])
         stats["files_undefined"] += len(result["undefined"])

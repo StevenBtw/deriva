@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
@@ -51,6 +52,23 @@ def test_the_components_the_llm_groups_become_one_application_and_the_call_sees_
     assert result["grouping_decisions"] == {"ac_back": "Shop System", "ac_front": "Shop System", "ac_jobs": "Nightly Jobs"}
 
 
+@pytest.mark.parametrize("readme, calls", [("# Shop System - Online Store\n", 0), ("# Shop System - Online Store\n\nA shop and its nightly jobs.\n", 1)])
+def test_without_documentation_to_judge_structure_puts_every_component_under_the_title(am, monkeypatch, readme, calls):
+    """With ``without_documentation`` "title", a repository whose prompt would show no introduction and no component
+    README title makes no call: every component belongs to the application its title names. An introduction asks."""
+    for unit, name in (("front", "Shop Frontend"), ("back", "Shop Backend"), ("jobs", "Nightly Jobs")):
+        am.add_element(Element(name=name, element_type="ApplicationComponent", identifier=f"ac_{unit}", properties={"source": f"unit::r::{unit}"}))
+    monkeypatch.setattr(derivation, "_documentation_files", lambda graph: {"r/README.md": readme})
+    llm = MagicMock(return_value=SimpleNamespace(content=json.dumps({"assignments": {}})))
+    settings = {"kind_words": ["Frontend", "Backend"], "intro_chars": 500, "title": "first", "without_documentation": "title"}
+
+    result = derivation._application_grouping_step(settings, "Group.", _graph(["front", "back", "jobs"]), am, llm)
+
+    assert llm.call_count == calls
+    if not calls:
+        assert [(e["name"], e["properties"]["sources"]) for e in result["created_elements"]] == [("Shop System", ["unit::r::back", "unit::r::front", "unit::r::jobs"])]
+
+
 def test_a_system_component_or_a_single_top_level_component_makes_no_call(am):
     am.add_element(Element(name="Only", element_type="ApplicationComponent", identifier="ac_only", properties={"source": "unit::r::only"}))
     llm = MagicMock()
@@ -87,10 +105,16 @@ def test_the_documentation_step_settings_are_read_from_their_params_key_and_chec
     assert derivation._application_grouping_config(json.dumps({"application_grouping": settings})) == settings
     with pytest.raises(ValueError, match="params.application_grouping"):
         derivation._application_grouping_config(json.dumps({"application_grouping": {"title": "some"}}))
+    with pytest.raises(ValueError, match="params.application_grouping"):
+        derivation._application_grouping_config(json.dumps({"application_grouping": {"intro_chars": True}}))
     assert derivation._documentation_actors_config(json.dumps({"other": 1})) is None
     assert derivation._documentation_actors_config(json.dumps({"documentation_actors": {"intro_chars": 200}})) == {"intro_chars": 200}
     with pytest.raises(ValueError, match="params.documentation_actors"):
         derivation._documentation_actors_config(json.dumps({"documentation_actors": {"intro_chars": -1}}))
+    # A switch is no character count, although bool is an int in Python
+    for flag in (True, False):
+        with pytest.raises(ValueError, match="params.documentation_actors"):
+            derivation._documentation_actors_config(json.dumps({"documentation_actors": {"evidence_chars": flag}}))
 
 
 def test_the_actor_step_makes_no_call_without_components_or_without_a_documented_actor(am, monkeypatch):
@@ -143,7 +167,7 @@ def test_both_run_paths_dispatch_the_documentation_steps_and_refuse_bad_settings
 
     with patch.object(derivation.config, "get_derivation_configs") as get:
         get.side_effect = lambda engine, enabled_only, phase: cfgs if phase == "generate" else []
-        kwargs = {"engine": MagicMock(), "graph_manager": MagicMock(), "archimate_manager": MagicMock(), "llm_query_fn": MagicMock(), "phases": ["generate"]}
+        kwargs: dict[str, Any] = {"engine": MagicMock(), "graph_manager": MagicMock(), "archimate_manager": MagicMock(), "llm_query_fn": MagicMock(), "phases": ["generate"]}
         if iterate:
             messages = [u.message for u in derivation.run_derivation_iter(**kwargs) if u.status == "error"]
         else:
@@ -151,3 +175,113 @@ def test_both_run_paths_dispatch_the_documentation_steps_and_refuse_bad_settings
 
     assert grouping.call_count == 1 and actors.call_count == 1
     assert any("Missing required config for Broken" in m and "params.documentation_actors" in m for m in messages)
+
+
+# A joint run holds several repositories in one graph: each repository is decided on its own
+def _joint_graph(rows, concepts=()):
+    graph = MagicMock()
+    graph.query.side_effect = lambda query, params=None: list(concepts) if "BusinessConcept" in query else rows if "n.id IN" in query or "u.active" in query else []
+    return graph
+
+
+def _unit_row(repo, unit, system=None, labels=("Graph", "DeployableUnit")):
+    return {"id": f"{'unit' if 'DeployableUnit' in labels else 'module'}::{repo}::{unit}", "path": f"{repo}/{unit}", "labels": list(labels), "system": system}
+
+
+def test_in_a_joint_run_each_repository_is_grouped_by_its_own_call_and_a_system_elsewhere_stops_none(am, monkeypatch):
+    for repo, unit, name in (("r", "front", "Shop Frontend"), ("r", "back", "Shop Backend"), ("s", "alpha", "Ledger Alpha"), ("s", "beta", "Ledger Beta")):
+        am.add_element(Element(name=name, element_type="ApplicationComponent", identifier=f"ac_{repo}_{unit}", properties={"source": f"unit::{repo}::{unit}"}))
+    am.add_element(Element(name="Core", element_type="ApplicationComponent", identifier="ac_t_core", properties={"source": "module::t::core"}))
+    documents = {"r/README.md": "# Shop System\n", "s/README.md": "# Ledger Suite\n", "t/README.md": "# Tools\n"}
+    monkeypatch.setattr(derivation, "_documentation_files", lambda graph: documents)
+    rows = [_unit_row("r", "front"), _unit_row("r", "back"), _unit_row("s", "alpha"), _unit_row("s", "beta"), _unit_row("t", "core", system=True, labels=("Graph", "BuildModule"))]
+    calls = []
+
+    def llm(prompt, schema, **kwargs):
+        keys = sorted(schema["schema"]["properties"]["assignments"]["properties"])
+        calls.append(keys)
+        title = "Shop System" if keys[0].startswith("ac_r_") else "Ledger Suite"
+        return SimpleNamespace(content=json.dumps({"assignments": dict.fromkeys(keys, title)}))
+
+    result = derivation._application_grouping_step({"kind_words": ["Frontend", "Backend"]}, "Group.", _joint_graph(rows), am, llm)
+
+    assert calls == [["ac_r_back", "ac_r_front"], ["ac_s_alpha", "ac_s_beta"]]  # t holds a system component: no call
+    assert sorted((e["name"], tuple(e["properties"]["sources"])) for e in result["created_elements"]) == [
+        ("Ledger Suite", ("unit::s::alpha", "unit::s::beta")),
+        ("Shop System", ("unit::r::back", "unit::r::front")),
+    ]
+
+
+def test_in_a_joint_run_each_repository_chooses_its_actors_from_its_own_documentation(am, monkeypatch):
+    for repo, unit in (("r", "shop"), ("s", "ledger")):
+        am.add_element(Element(name=unit.title(), element_type="ApplicationComponent", identifier=f"ac_{repo}", properties={"source": f"unit::{repo}::{unit}"}))
+    documents = {"r/README.md": "# Shop\n\n## Use\n\nA customer uses the shop.\n", "s/README.md": "# Ledger\n\n## Use\n\nAn auditor uses the ledger.\n"}
+    monkeypatch.setattr(derivation, "_documentation_files", lambda graph: documents)
+    concepts = [{"id": "concept::r::customer", "name": "Customer"}, {"id": "concept::s::auditor", "name": "Auditor"}]
+    calls = []
+
+    def llm(prompt, schema, **kwargs):
+        options = schema["schema"]["properties"]["actors"]["properties"]
+        calls.append({app: spec["items"]["enum"] for app, spec in options.items()})
+        return SimpleNamespace(content=json.dumps({"actors": {app: spec["items"]["enum"] for app, spec in options.items()}}))
+
+    result = derivation._documentation_actors_step({}, "Choose.", _joint_graph([_unit_row("r", "shop"), _unit_row("s", "ledger")], concepts), am, llm)
+
+    assert calls == [{"ac_r": ["Customer"]}, {"ac_s": ["Auditor"]}]
+    assert sorted((e["name"], e["properties"]["sources"]) for e in result["created_elements"]) == [("Auditor", ["unit::s::ledger"]), ("Customer", ["unit::r::shop"])]
+
+
+def test_generic_actor_words_are_no_candidates_and_the_llm_never_sees_them(am, monkeypatch):
+    """With ``generic_actors``, a candidate whose name is one of the words (by name key: "People" is "person") is left
+    out before the call; without it nothing changes."""
+    am.add_element(Element(name="Shop", element_type="ApplicationComponent", identifier="ac_r", properties={"source": "unit::r::shop"}))
+    monkeypatch.setattr(derivation, "_documentation_files", lambda graph: {"r/README.md": "# Shop\n\n## Use\n\nPeople and the customer use the shop.\n"})
+    concepts = [{"id": "concept::r::customer", "name": "Customer"}, {"id": "concept::r::people", "name": "People"}]
+    calls = []
+
+    def llm(prompt, schema, **kwargs):
+        options = schema["schema"]["properties"]["actors"]["properties"]
+        calls.append({app: spec["items"]["enum"] for app, spec in options.items()})
+        return SimpleNamespace(content=json.dumps({"actors": {app: [] for app in options}}))
+
+    graph = _joint_graph([_unit_row("r", "shop")], concepts)
+    derivation._documentation_actors_step({"generic_actors": ["person", "user"]}, "Choose.", graph, am, llm)
+    derivation._documentation_actors_step({}, "Choose.", graph, am, llm)
+
+    assert calls == [{"ac_r": ["Customer"]}, {"ac_r": ["Customer", "People"]}]
+
+
+def test_with_evidence_chars_the_actor_prompt_shows_the_sentence_per_candidate(am, monkeypatch):
+    am.add_element(Element(name="Shop", element_type="ApplicationComponent", identifier="ac_r", properties={"source": "unit::r::shop"}))
+    monkeypatch.setattr(derivation, "_documentation_files", lambda graph: {"r/README.md": "# Shop\n\n## Use\n\nA customer uses the shop. Nothing else.\n"})
+    graph = _joint_graph([_unit_row("r", "shop")], [{"id": "concept::r::customer", "name": "Customer"}])
+    prompts = []
+
+    def llm(prompt, schema, **kwargs):
+        prompts.append(prompt)
+        return SimpleNamespace(content=json.dumps({"actors": {"ac_r": []}}))
+
+    derivation._documentation_actors_step({"evidence_chars": 200}, "Choose.", graph, am, llm)
+    derivation._documentation_actors_step({}, "Choose.", graph, am, llm)
+
+    assert '## Evidence per candidate\n- ac_r:\n  - Customer: A customer uses the shop. (r/README.md, "Use")\n' in prompts[0]
+    assert "## Evidence" not in prompts[1]
+
+
+def test_in_a_joint_run_where_one_repository_has_applications_it_reads_only_its_own_documentation(am, monkeypatch):
+    """A joint graph whose other repositories hold no top-level component still scopes the one repository's call to
+    its own documentation and concepts."""
+    am.add_element(Element(name="Shop", element_type="ApplicationComponent", identifier="ac_r", properties={"source": "unit::r::shop"}))
+    documents = {"r/README.md": "# Shop\n\n## Use\n\nA customer uses the shop.\n", "s/README.md": "# Notes\n\n## Use\n\nAn auditor checks the shop.\n"}
+    monkeypatch.setattr(derivation, "_documentation_files", lambda graph: documents)
+    concepts = [{"id": "concept::r::customer", "name": "Customer"}, {"id": "concept::s::auditor", "name": "Auditor"}]
+    calls = []
+
+    def llm(prompt, schema, **kwargs):
+        options = schema["schema"]["properties"]["actors"]["properties"]
+        calls.append({app: spec["items"]["enum"] for app, spec in options.items()})
+        return SimpleNamespace(content=json.dumps({"actors": {app: [] for app in options}}))
+
+    derivation._documentation_actors_step({}, "Choose.", _joint_graph([_unit_row("r", "shop")], concepts), am, llm)
+
+    assert calls == [{"ac_r": ["Customer"]}]

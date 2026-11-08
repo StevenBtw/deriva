@@ -80,7 +80,7 @@ def test_defaults_are_todays_literals(dotenv, monkeypatch):
     dotenv("")
 
     llm = LlmSettings()
-    assert (llm.default_model, llm.provider, llm.temperature, llm.max_retries, llm.timeout, llm.max_tokens) == (None, "azure", 0.7, 3, 60, None)
+    assert (llm.default_model, llm.provider, llm.temperature, llm.max_retries, llm.timeout, llm.max_tokens) == (None, None, 0.7, 3, 60, None)
     assert (llm.cache_dir, llm.cache_ttl, llm.nocache) == ("workspace/cache/llm", 0, False)
     assert (llm.rate_limit_rpm, llm.rate_limit_delay, llm.retry_base_delay, llm.retry_max_delay) == (0, 0.0, 2.0, 60.0)
     assert (llm.throttle_enabled, llm.throttle_min_factor, llm.throttle_recovery_time) == (True, 0.25, 60.0)
@@ -234,3 +234,10 @@ def test_llm_credentials_strip_padding_inside_quotes(dotenv, monkeypatch):
     assert llm.provider == "openai"
     assert llm.anthropic_api_key == "sk-ant-123"
     assert llm.anthropic_model == "claude-sonnet-4-20250514"
+
+
+def test_an_empty_query_language_is_the_default(monkeypatch):
+    from deriva.common.settings import GrafeoSettings
+
+    monkeypatch.setenv("GRAFEO_QUERY_LANGUAGE", "")
+    assert GrafeoSettings().query_language == "gql"

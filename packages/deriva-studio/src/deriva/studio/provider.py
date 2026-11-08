@@ -8,9 +8,9 @@ from collections.abc import Callable, Generator
 from contextlib import contextmanager
 from typing import Any
 
-from deriva.services import PipelineSession
+from deriva.services import ConfigDatabaseBusy, GraphDatabaseBusy, PipelineSession
 
-# DuckDB's messages for a database another process holds (Windows; Linux and macOS)
+# DuckDB's raw messages for a database another process holds (Windows; Linux and macOS), for errors not yet wrapped
 _HELD_MARKERS = ("being used by another process", "File is already open in", "Conflicting lock is held")
 _PID = re.compile(r"\(PID (\d+)\)")
 
@@ -73,10 +73,12 @@ class SessionProvider:
             candidate.connect()
         except Exception as exc:
             text = str(exc)
-            if any(marker in text for marker in _HELD_MARKERS):
-                match = _PID.search(text)
+            if isinstance(exc, ConfigDatabaseBusy | GraphDatabaseBusy) or any(marker in text for marker in _HELD_MARKERS):
+                # ConfigDatabaseBusy keeps DuckDB's own message (with the PID) as its cause
+                match = _PID.search(text) or _PID.search(str(exc.__cause__ or ""))
                 self.held_by = int(match.group(1)) if match else None
                 self.error = text
+                # The session's connect already closed what it opened before the other database refused
                 raise DatabaseHeld(text, self.held_by) from exc
             raise
         self.held_by = None

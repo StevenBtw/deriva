@@ -134,14 +134,25 @@ _ENVIRONMENTS: dict[str, tuple[Any, int]] = {}
 _ENVIRONMENTS_LOCK = threading.Lock()
 
 
-def _open_environment(directory: Path, map_size: int) -> Any:
+def _open_environment(directory: Path, map_size: int, names: tuple[bytes, ...]) -> tuple[Any, list[Any]]:
+    """The folder's shared environment (opened by the first store) with the named databases, all under the lock:
+    lmdb wants mdb_dbi_open serialized on one environment, and cache_contents opens them under the same lock. A
+    database that cannot open releases this store's share before the error goes on, so a failed open holds no file."""
     key = os.path.normcase(str(directory.resolve()))
     with _ENVIRONMENTS_LOCK:
         env, users = _ENVIRONMENTS.get(key, (None, 0))
         if env is None:
             env = lmdb.open(str(directory), map_size=map_size, subdir=True, max_dbs=2)
         _ENVIRONMENTS[key] = (env, users + 1)
-        return env
+        try:
+            return env, [env.open_db(name) for name in names]
+        except lmdb.Error:
+            if users:
+                _ENVIRONMENTS[key] = (env, users)
+            else:
+                del _ENVIRONMENTS[key]
+                env.close()
+            raise
 
 
 def _close_environment(directory: Path) -> None:
@@ -155,6 +166,47 @@ def _close_environment(directory: Path) -> None:
             return
         del _ENVIRONMENTS[key]
         env.close()
+
+
+def cache_contents(directory: str | Path) -> tuple[int, int] | None:
+    """(entries, bytes of their rows) of the lmdb cache in a folder, or None when the folder holds no map lmdb can read
+    (none at all, a damaged one, another format, a lock it cannot take).
+
+    The map file (data.mdb) is as large as its map size, so its size on disk says little about what the cache holds;
+    the store keeps the total row size in its meta database and lmdb counts the entries. Measuring never writes: the
+    environment this process already has open is used as it is, else the folder is opened read-only and closed after,
+    and Deriva's two databases are opened without creating them (a map without them is no Deriva cache).
+    """
+    folder = Path(directory)
+    map_file = folder / "data.mdb"
+    if not map_file.is_file():
+        return None
+    key = os.path.normcase(str(folder.resolve()))
+    with _ENVIRONMENTS_LOCK:  # no store opens or closes the folder meanwhile
+        shared, _ = _ENVIRONMENTS.get(key, (None, 0))
+        env = shared
+        try:
+            if env is None:
+                env = lmdb.open(str(folder), readonly=True, subdir=True, max_dbs=2, map_size=max(1, map_file.stat().st_size))
+            with env.begin() as txn:
+                entries = env.open_db(_LmdbStore._ENTRIES, txn=txn, create=False)
+                meta = env.open_db(_LmdbStore._META, txn=txn, create=False)
+                count = txn.stat(entries)["entries"]
+                raw = txn.get(_LmdbStore._STATE, db=meta)
+        except lmdb.Error:
+            return None  # no lmdb map, another format, a lock it cannot take, or a map without Deriva's databases
+        finally:
+            if shared is None and env is not None:
+                env.close()
+    if raw is None:
+        return count, 0
+    try:
+        state = json.loads(raw)
+    except ValueError:
+        return None
+    size = state.get("size") if isinstance(state, dict) else None
+    # A state of another shape ("[]", "3", a size that is no whole number) is not Deriva's
+    return (count, size) if isinstance(size, int) and not isinstance(size, bool) else None
 
 
 class _LmdbStore:
@@ -175,9 +227,7 @@ class _LmdbStore:
         self._size_limit = size_limit
         # The map grows with the data up to map_size; twice the limit leaves room for one eviction pass
         # (the first store on a folder opens it; later ones share that environment)
-        self._env = _open_environment(self._dir, max(2 * size_limit, 64 * 1024 * 1024))
-        self._entries = self._env.open_db(self._ENTRIES)
-        self._meta = self._env.open_db(self._META)
+        self._env, (self._entries, self._meta) = _open_environment(self._dir, max(2 * size_limit, 64 * 1024 * 1024), (self._ENTRIES, self._META))
         self._closed = False
 
     def _read_state(self, txn) -> dict[str, int]:

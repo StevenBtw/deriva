@@ -11,6 +11,7 @@ class FakeGraph:
         "DataEntity": [{"d": "domain::r::order", "e": "entity::r::order", "n": "Order"}, {"d": "domain::r::order", "e": "entity::r::line", "n": "Order Line"}],
         "program": [],
         "Lifecycle": [{"l": "lifecycle::r::order", "s": ["DRAFT", "PAID"]}],
+        "File": [{"f": "file::r::a", "p": "r/web/index.html"}],
     }
 
     def query(self, cypher, params=None):
@@ -31,6 +32,7 @@ def test_the_lineage_is_read_from_the_graph():
 
     assert lineage.entities == {"domain::r::order": [("entity::r::line", "Order Line"), ("entity::r::order", "Order")]}
     assert lineage.states == {"lifecycle::r::order": ["DRAFT", "PAID"]}
+    assert lineage.files == {"file::r::a": "r/web/index.html"}
 
 
 def test_without_a_graph_there_is_no_detail_level():

@@ -28,6 +28,7 @@ from typing import Any
 
 import yaml
 
+from deriva.common.naming import contains_name
 from deriva.modules.extraction.technologies import Technology, image_name, match_technology
 
 _WORKLOADS = {"Deployment", "StatefulSet", "DaemonSet", "Job", "CronJob"}
@@ -48,7 +49,13 @@ class DeploymentRules:
     compose_defaults: tuple[str, ...] = ("compose.yaml", "compose.yml", "docker-compose.yaml", "docker-compose.yml")
     # The override files Compose merges into a default-named file by default: part of the primary, no variant
     compose_overrides: tuple[str, ...] = ("compose.override.yaml", "compose.override.yml", "docker-compose.override.yaml", "docker-compose.override.yml")
-    environment_names: tuple[tuple[str, str], ...] = (("compose", "Docker Compose"), ("kubernetes", "Kubernetes"), ("cloud", "AWS ECS"), ("mainframe", "Mainframe"))
+    environment_names: tuple[tuple[str, str], ...] = (
+        ("compose", "Docker Compose"),
+        ("kubernetes", "Kubernetes"),
+        ("cloud", "AWS ECS"),
+        ("mainframe", "Mainframe"),
+        ("aspire", "Aspire"),
+    )
     # Files whose image build commands name a project's own images (scripts relative to their folder, YAML to the root)
     build_scripts: tuple[str, ...] = ("*.sh", "*.bash", "makefile", "*.mk", "*.yml", "*.yaml")
     # Content markers: (pattern, technology alias); a source file matching the pattern uses that technology
@@ -59,6 +66,18 @@ class DeploymentRules:
     manifest_runtimes: tuple[tuple[str, str], ...] = ()
     # An environment that runs one of the repository's own units ranks before one that runs only ready-made images
     primary_runs_units: bool = False
+    # Categories of the Technology step whose answers join the system software; none: only this step's own signals
+    classified_categories: tuple[str, ...] = ()
+    # .NET Aspire (off without aspire_host): a source file (aspire_suffixes) that calls aspire_host is an app host, an
+    # environment. On the builder it returns, a project call (aspire_projects: ``Name<Projects.X>("name")`` or
+    # ``Name("name", "path")``) deploys a unit and any other call named aspire_resource + technology (``AddRedis("cache")``)
+    # is a resource of that technology; a call of that kind on a resource adds a part of it (a database), and the
+    # aspire_references calls (``WithReference(x)``) name the resources and projects a project uses
+    aspire_host: str = ""
+    aspire_suffixes: tuple[str, ...] = ()
+    aspire_projects: tuple[str, ...] = ()
+    aspire_resource: str = ""
+    aspire_references: tuple[str, ...] = ()
 
 
 @dataclass
@@ -68,7 +87,7 @@ class DeployedService:
     name: str
     unit: str | None = None
     image: str | None = None
-    kind: str = "service"  # service (compose, Kubernetes) or container (cloud)
+    kind: str = "service"  # service (compose, Kubernetes), container (cloud) or resource (an Aspire technology, no image)
     depends_on: list[str] = field(default_factory=list)
     environment: dict[str, str] = field(default_factory=dict)
     ports: list[int] = field(default_factory=list)  # Published and container ports (compose)
@@ -145,13 +164,17 @@ class _Units:
                 last.setdefault(words[-1], []).append(str(u["id"]))
         self.by_last = {word: ids[0] for word, ids in last.items() if len(ids) == 1}
 
-    def by_folder(self, folder: str, *names: str | None) -> str | None:
-        """The unit in a folder; units that share it are told apart by name (``by_name``), else none is."""
+    def at_folder(self, folder: str, *names: str | None) -> str | None:
+        """The unit exactly in a folder; units that share it are told apart by name (``by_name``), else none is."""
         exact = [u for u in self.units if u["path"] == folder]
         if len(exact) > 1:
             return _Units(exact).by_name(*names)
-        if exact:
-            return str(exact[0]["id"])
+        return str(exact[0]["id"]) if exact else None
+
+    def by_folder(self, folder: str, *names: str | None) -> str | None:
+        """The unit in a folder (``at_folder``), else the only one below it."""
+        if any(u["path"] == folder for u in self.units):
+            return self.at_folder(folder, *names)
         below = [u for u in self.units if str(u["path"]).startswith(folder + "/")]
         return str(below[0]["id"]) if len(below) == 1 else None
 
@@ -170,9 +193,13 @@ class _Units:
         return sorted(str(u["id"]) for u in (listing or nearest))
 
     def by_exact_name(self, names: list[str]) -> str | None:
-        """The one unit whose name or folder name is one of the names (case-insensitive), first name first."""
+        """The one unit whose name, folder name or manifest name is one of the names (case-insensitive), first name first."""
         for name in names:
-            found = [u for u in self.units if name.casefold() in (str(u.get("name") or "").casefold(), PurePosixPath(str(u["path"])).name.casefold())]
+            found = [
+                u
+                for u in self.units
+                if name.casefold() in (str(u.get("name") or "").casefold(), PurePosixPath(str(u["path"])).name.casefold(), str(u.get("manifest") or "").casefold())
+            ]
             if len(found) == 1:
                 return str(found[0]["id"])
         return None
@@ -184,16 +211,32 @@ class _Units:
                 return self.by_last[words[-1]]
         return None
 
+    def by_project_file(self, name: str, suffix: str = ".csproj") -> str | None:
+        """The one unit with a project file among its members whose name is ``name`` after normalisation
+        (``Shop.Api.csproj`` is ``Shop_Api``), whatever the unit, its folder or its assembly are called."""
+        key = "".join(_tokens(name))
+        found = {
+            str(u["id"])
+            for u in self.units
+            for member in u.get("members") or ()
+            if str(member).lower().endswith(suffix) and "".join(_tokens(PurePosixPath(str(member)).name[: -len(suffix)])) == key
+        }
+        return next(iter(found)) if len(found) == 1 else None
+
     def by_image(self, image: str | None) -> str | None:
-        """The one unit whose name or folder name equals the image's last name segment or its tag, exact after
-        normalisation (one image repository for every service, the service in the tag: ``acme/suite:orderstore``)."""
+        """The one unit whose name, folder name or manifest name equals the image's last name segment or its tag, exact
+        after normalisation (one image repository for every service, the service in the tag: ``acme/suite:orderstore``)."""
         if not image:
             return None
         reference = image.strip().split("@", 1)[0]
         tag = reference.rsplit(":", 1)[1] if ":" in reference.rsplit("/", 1)[-1] else ""
         keys = ["".join(_tokens(image_name(image).rsplit("/", 1)[-1])), "".join(_tokens(tag))]
         for key in (k for k in keys if k):
-            found = [u for u in self.units if key in ("".join(_tokens(str(u.get("name") or ""))), "".join(_tokens(PurePosixPath(str(u["path"])).name)))]
+            found = [
+                u
+                for u in self.units
+                if key in ("".join(_tokens(str(u.get("name") or ""))), "".join(_tokens(PurePosixPath(str(u["path"])).name)), "".join(_tokens(str(u.get("manifest") or ""))))
+            ]
             if len(found) == 1:
                 return str(found[0]["id"])
         return None
@@ -211,6 +254,12 @@ def _compose(path: str, text: str, units: _Units, rules: DeploymentRules) -> Env
         context = build.get("context") if isinstance(build, dict) else build
         image = spec.get("image") if isinstance(spec.get("image"), str) else None
         unit = units.by_folder(_normalize(f"{_parent(path)}/{context}"), image, str(name)) if isinstance(context, str) else None
+        dockerfile = build.get("dockerfile") if isinstance(build, dict) else None
+        if unit is None and isinstance(dockerfile, str):
+            # Nothing else names it (``context: .`` from the repository root): its image or name exactly, the unit in the
+            # Dockerfile's own folder, and only then the last word of either, a guess that an explicit path overrules
+            folder = _normalize(f"{_parent(path)}/{context or '.'}/{_parent(dockerfile.replace(chr(92), '/'))}")
+            unit = units.by_image(image) or units.by_exact_name([str(name)]) or units.at_folder(folder, image, str(name)) or units.by_name(image, str(name))
         unit = unit or (units.by_name(image, str(name)) if (image or not context) else None) or units.by_image(image)
         depends = spec.get("depends_on") or []
         variables = spec.get("environment") or {}
@@ -226,6 +275,56 @@ def _compose(path: str, text: str, units: _Units, rules: DeploymentRules) -> Env
                 ports=_ports(spec.get("ports")),
             )
         )
+    return env
+
+
+_CODE_COMMENT = re.compile(r'"(?:[^"\\\n]|\\.)*"|//[^\n]*|/\*.*?\*/', re.DOTALL)
+_ASPIRE_CALL = re.compile(r'\s*(?:var\s+(\w+)\s*=\s*)?(\w+)\s*\.\s*(\w+)\s*(?:<\s*([\w.]+)\s*>)?\s*\(\s*(?:"([^"]*)"(?:\s*,\s*"([^"]*)")?)?')
+
+
+def _aspire(path: str, text: str, units: _Units, rules: DeploymentRules) -> Environment | None:
+    """The environment an Aspire app host declares (``DeploymentRules.aspire_host``), or None for any other file.
+
+    Read statement by statement, in order: a variable holds the service its statement adds (a part of a resource
+    stands for the resource); a project's references are the services those variables hold.
+    """
+    # Comments go, strings stay (a URL holds two slashes)
+    code = _CODE_COMMENT.sub(lambda m: m.group(0) if m.group(0).startswith('"') else "", text)
+    host = re.search(rf"\b(?:var\s+(\w+)\s*=\s*)?{re.escape(rules.aspire_host)}\s*\(", code)
+    if not rules.aspire_host or host is None:
+        return None
+    builder = host.group(1) or "builder"
+    env = Environment(kind="aspire", name=dict(rules.environment_names).get("aspire", "Aspire"), file=path)
+    services: dict[str, DeployedService] = {}
+    held: dict[str, str] = {}  # variable -> the service it holds
+    projects = "|".join(re.escape(name) for name in rules.aspire_projects)
+    references = "|".join(re.escape(name) for name in rules.aspire_references)
+    for statement in code.split(";"):
+        start = _ASPIRE_CALL.match(statement)
+        if start is None:
+            continue
+        variable, subject, method, generic, name, second = start.groups()
+        service: DeployedService | None = None
+        if subject == builder and (name or generic) and projects and re.fullmatch(projects, method):
+            # A project by its path from the host's folder, else by its manifest name (Projects.Shop_Api is Shop.Api);
+            # without a written name it is named after its project type
+            unit = units.by_folder(_normalize(f"{_parent(path)}/{second}")) if second else None
+            # Aspire names Projects.X after the project file; a unit's name, folder or manifest name as the fallback
+            unit = unit or (units.by_project_file(generic.rsplit(".", 1)[-1]) or units.by_image(generic.rsplit(".", 1)[-1]) if generic else None)
+            name = name or generic.rsplit(".", 1)[-1]
+            service = services.setdefault(name, DeployedService(name=name, unit=unit))
+        elif subject == builder and name and rules.aspire_resource and method.startswith(rules.aspire_resource) and len(method) > len(rules.aspire_resource):
+            service = services.setdefault(name, DeployedService(name=name, image=method[len(rules.aspire_resource) :].lower(), kind="resource"))
+        elif subject in held:
+            service = services[held[subject]]
+        if service is None:
+            continue
+        if variable:
+            held[variable] = service.name
+        if service.kind != "resource" and references:
+            used = {held[v] for v in re.findall(rf"\.\s*(?:{references})\s*\(\s*(\w+)\s*\)", statement) if v in held}
+            service.depends_on = sorted(set(service.depends_on) | used)
+    env.services = list(services.values())
     return env
 
 
@@ -358,6 +457,10 @@ def detect_deployments(
                 depth = len(PurePosixPath(path).relative_to(by_id[unit]).parts) if path.startswith(by_id[unit] + "/") else 0
                 runtimes.setdefault(unit, []).append((depth, image))
             continue
+        if rules.aspire_host and lower.endswith(rules.aspire_suffixes):
+            if env := _aspire(path, text, lookup, rules):
+                environments.append(env)
+            continue
         if any(fnmatch.fnmatchcase(lower, p) for p in rules.compose_files):
             if env := _compose(path, text, lookup, rules):
                 environments.append(env)
@@ -384,7 +487,7 @@ def detect_deployments(
     result.managed = managed
     if cloud:
         environments.append(cloud)
-    order = {"cloud": 0, "compose": 1, "kubernetes": 2}
+    order = {"cloud": 0, "compose": 1, "aspire": 2, "kubernetes": 3}
     defaults = [name.lower() for name in rules.compose_defaults]
     # The deployment tool's default file name, in its lookup order, before any other name (a variant can sort first)
     default_rank = lambda e: defaults.index(PurePosixPath(e.file).name.lower()) if PurePosixPath(e.file).name.lower() in defaults else len(defaults)  # noqa: E731 - a one-line helper
@@ -584,6 +687,8 @@ def technology_layer(
     catalog: tuple[Technology, ...],
     sources: dict[str, str],
     cdk: dict[str, dict[str, Any]] | None = None,
+    classified: Iterable[tuple[str, tuple[str, ...]]] = (),
+    image_labels: dict[str, str] | None = None,
 ) -> TechnologyLayer:
     """The primary environment, the units it runs and the system software with its evidence.
 
@@ -605,6 +710,10 @@ def technology_layer(
         catalog: The closed list of technologies
         sources: Path -> text of the source files searched for content markers
         cdk: Path -> the resources of the CDK app files (see ``detect_deployments``)
+        classified: (name, files) the Technology step classified (``rules.classified_categories``): a name that holds an
+            entry of the closed list's name is that entry, any other stays as written, not listed
+        image_labels: Image -> the system the Technology step's label names ("" for none): an image off the list is
+            that system (on the list when its name is), an image labelled none is no software
     """
     deployments = detect_deployments(repository, files, units, rules, cdk)
     layer = TechnologyLayer(deployments=deployments, environment=deployments.primary)
@@ -626,11 +735,24 @@ def technology_layer(
 
     software: dict[str, Software] = {}
 
-    def add(alias: str, evidence: str, *, in_environment: bool = False, serves: tuple[str, ...] = (), fallback: bool = False, outside: str | None = None) -> None:
-        # serves: the deployed units among them; outside: a unit the environment does not run, served all the same
+    def add(
+        alias: str, evidence: str, *, in_environment: bool = False, serves: tuple[str, ...] = (), fallback: bool = False, outside: str | None = None, written: str = ""
+    ) -> None:
+        # serves: the deployed units among them; outside: a unit the environment does not run, served all the same;
+        # written: the image as the deployment writes it, before it is resolved to the image it is built on
         tech = match_technology(alias, catalog)
         if tech is None and not fallback:
             return
+        # The label of the image as written names what it runs; one labelled none still runs the image it is built on
+        if tech is None and image_labels and written and written != alias and image_labels.get(written):
+            alias = written
+        if tech is None and image_labels is not None and alias in image_labels:
+            # An image off the list runs the system its label names; labelled none, it is no software
+            if not image_labels[alias]:
+                return
+            # As a classified name: one that holds an entry's name is that entry ("Apache Kafka" is Kafka)
+            alias = image_labels[alias]
+            tech = match_technology(alias, catalog) or next((t for t in catalog if contains_name(alias, t.name)), None)
         key = tech.name if tech else alias
         entry = software.setdefault(key, Software(name=key, kind=tech.kind if tech else "fallback", listed=tech is not None))
         if evidence not in entry.evidence:
@@ -642,7 +764,11 @@ def technology_layer(
         for service in env.services:
             if service.unit is None and service.image:
                 users = tuple(s.unit for s in env.services if s.unit and (service.name in s.depends_on or any(_references(v, service.name) for v in s.environment.values())))
-                add(resolve_image(service.image, built, files), f"image of {service.name}", in_environment=True, serves=users, fallback=True)
+                if service.kind == "resource":
+                    # An Aspire resource names its technology, not an image: software only when the list has it
+                    add(service.image, f"resource {service.name}", in_environment=True, serves=users)
+                else:
+                    add(resolve_image(service.image, built, files), f"image of {service.name}", in_environment=True, serves=users, fallback=True, written=image_name(service.image))
     for unit, images in sorted(deployments.base_images.items()):
         for image in images:
             if unit in deployed:
@@ -673,6 +799,11 @@ def technology_layer(
                 add(dependency, f"dependency of {holder}", serves=(holder,))
             if runtime and holder not in deployments.base_images:
                 add(runtime, f"manifest of {holder}", serves=(holder,))
+
+    for name, paths in sorted(classified):
+        holders = tuple(sorted({unit for p in paths for unit in lookup.holders(p)}))
+        tech = match_technology(name, catalog) or next((t for t in catalog if contains_name(name, t.name)), None)
+        add(tech.name if tech else name, f"classified from {len(paths)} files", serves=holders, fallback=True)
 
     # A driver-detected engine (not running in the environment itself) is the managed service of that engine
     # when the environment has one: the qualifier names the engine; its evidence and users move to the service

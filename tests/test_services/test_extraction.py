@@ -6,11 +6,13 @@ import json
 import tempfile
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any, cast
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from deriva.modules.extraction.edges import EdgeType
+from deriva.services.config import ExtractionConfig
 from deriva.services.extraction import (
     _build_llm_prompt,
     _create_node_from_data,
@@ -25,12 +27,25 @@ from deriva.services.extraction import (
 )
 
 
+def _config(**fields: Any) -> ExtractionConfig:
+    """A partial extraction config: only the fields the step reads."""
+    return cast(ExtractionConfig, SimpleNamespace(**fields))
+
+
 @pytest.fixture(autouse=True)
 def default_excluded_directories():
     """Most tests use a bare MagicMock engine; give the walk the default exclusion list."""
     from deriva.services import config
 
     with patch.object(config, "get_excluded_directories", return_value=list(config.DEFAULT_EXCLUDED_DIRECTORIES)):
+        yield
+
+
+@pytest.fixture(autouse=True)
+def any_checkout_extracts():
+    """These tests run steps on fake or empty checkouts; the guard that skips those has its own tests
+    (test_extraction_missing_repository.py)."""
+    with patch("deriva.services.extraction.missing_checkout", return_value=None):
         yield
 
 
@@ -393,7 +408,7 @@ class TestExtractLLMBased:
 
         with tempfile.TemporaryDirectory() as tmpdir:
             (Path(tmpdir) / "manifest.txt").write_text("x")
-            cfg = SimpleNamespace(
+            cfg = _config(
                 node_type="Test",
                 input_sources=json_module.dumps({"files": [{"type": "config", "subtype": "text"}]}),
                 params=None,
@@ -729,6 +744,17 @@ class TestCreateNodeFromData:
 
         assert node is not None
         assert node.name == "axios"
+
+    def test_a_go_module_keeps_its_indirect_flag_and_other_dependencies_have_none(self):
+        """A go.mod requirement marked // indirect is stored with the flag; a dependency without it stores no flag."""
+        indirect = _create_node_from_data("ExternalDependency", {"properties": {"dependencyName": "github.com/a/b", "indirect": True}}, "r")
+        direct = _create_node_from_data("ExternalDependency", {"properties": {"dependencyName": "github.com/a/c", "indirect": False}}, "r")
+        plain = _create_node_from_data("ExternalDependency", {"properties": {"dependencyName": "axios"}}, "r")
+
+        assert indirect is not None and direct is not None and plain is not None
+        assert indirect.to_dict()["indirect"] is True
+        assert direct.to_dict()["indirect"] is False  # a direct requirement says so, it is no missing flag
+        assert "indirect" not in plain.to_dict()
 
     def test_handles_missing_properties(self):
         """Should handle missing properties with defaults."""
@@ -1448,6 +1474,27 @@ class TestExtractEdges:
             assert "edges_created" in result
             mock_batch.assert_called_once()
 
+    def test_a_second_extraction_knows_only_the_declared_packages_as_a_first_one_does(self):
+        """An import the step could not resolve once leaves an undeclared dependency node; read back as a known package,
+        it would turn the repository's own imports external on the next run (a run on an existing graph)."""
+        from deriva.services.extraction import _extract_edges
+
+        mock_repo = MagicMock()
+        mock_repo.name = "shop"
+        dependencies = [
+            {"id": "extdep::shop::flask-sqlalchemy", "properties": {"dependencyName": "Flask-SQLAlchemy", "declared": True}},
+            {"id": "extdep::shop::shop", "properties": {"dependencyName": "shop", "declared": False}},
+        ]
+        graph_manager = MagicMock()
+        graph_manager.get_nodes_by_type.side_effect = lambda node_type, limit=None: dependencies if node_type == "ExternalDependency" else []
+
+        with tempfile.TemporaryDirectory() as tmpdir, patch("deriva.modules.extraction.edges.extract_edges_batch") as mock_batch:
+            (Path(tmpdir) / "main.py").write_text("from shop.orders import x\n")
+            mock_batch.return_value = {"data": {"edges": []}, "stats": {}, "errors": []}
+            _extract_edges(mock_repo, Path(tmpdir), [{"path": "main.py", "file_type": "source", "subtype": "python"}], graph_manager)
+
+        assert mock_batch.call_args.kwargs["external_packages"] == {"flask_sqlalchemy"}
+
     def test_lookups_carry_repo_relative_paths_so_the_same_file_is_preferred(self):
         """The graph stores repo-prefixed paths; the files being parsed are repo-relative, so the lookups drop the prefix."""
         from deriva.services.extraction import _extract_edges
@@ -1475,7 +1522,7 @@ class TestExtractEdges:
         from deriva.services.extraction import _run_step_writes
 
         params = {"call_languages": {"jcl": ["cobol"]}, "module_files": ["pom.xml", "Dockerfile*"]}
-        cfg = SimpleNamespace(node_type="Calls", params=json.dumps(params))
+        cfg = _config(node_type="Calls", params=json.dumps(params))
         files = [{"path": p} for p in ("svc/pom.xml", "svc/src/A.java", "svc/web/Dockerfile.web", "svc/web/app.js", "app/cbl/A.cbl")]
         graph_manager = MagicMock()
         graph_manager.get_nodes_by_type.return_value = []
@@ -1491,7 +1538,7 @@ class TestExtractEdges:
     def test_the_calls_step_validates_its_params(self):
         from deriva.services.extraction import _run_step_writes
 
-        cfg = SimpleNamespace(node_type="Calls", params=json.dumps({"call_languages": [["jcl", "cobol"]]}))
+        cfg = _config(node_type="Calls", params=json.dumps({"call_languages": [["jcl", "cobol"]]}))
         with pytest.raises(ValueError, match="Calls params"):
             _run_step_writes(cfg, SimpleNamespace(name="r"), Path("."), [], [], MagicMock(), None, MagicMock())
 
@@ -1537,7 +1584,7 @@ class TestExtractCalls:
             with patch("deriva.services.extraction._extract_edges") as mock_extract:
                 mock_extract.return_value = {"edges_created": 0, "errors": []}
 
-                _extract_calls(SimpleNamespace(params=None), mock_repo, Path(tmpdir), [], graph_manager)
+                _extract_calls(_config(params=None), mock_repo, Path(tmpdir), [], graph_manager)
 
             mock_extract.assert_called_once()
             assert mock_extract.call_args.args[4] == {EdgeType.CALLS}
@@ -1607,7 +1654,7 @@ class TestExtractDirectoryClassification:
             for i, (file_type, subtype) in enumerate([("source", "java"), ("source", "java"), ("docs", "markdown"), ("test", "java"), ("config", "yaml")]):
                 gm.add_node(FileNode(name=f"f{i}", path=f"alpha/f{i}", repository_name="r", file_type=file_type, subtype=subtype), node_id=f"file::r::f{i}")
                 gm.add_edge("dir::r::alpha", f"file::r::f{i}", "CONTAINS")
-            cfg = SimpleNamespace(instruction="I", example="{}", params=None, temperature=None, max_tokens=None, batch_size=50)
+            cfg = _config(instruction="I", example="{}", params=None, temperature=None, max_tokens=None, batch_size=50)
             with patch("deriva.services.extraction.classify_directories", return_value={"success": True, "data": {"nodes": [], "edges": []}}) as classify:
                 _extract_directory_classification(cfg, SimpleNamespace(name="r"), gm, MagicMock())
         close_database()
@@ -1635,7 +1682,7 @@ class TestExtractDirectoryClassification:
                 gm.add_node(FileNode(name="f", path=f"{path.removeprefix('r/')}/f", repository_name="r", file_type="source", subtype="java"), node_id=f"file::r::{path}/f")
                 gm.add_edge(f"dir::r::{path}", f"file::r::{path}/f", "CONTAINS")
             params = {"skip_names": ["utils"], "skip_trees": [], "skip_pass_through": True}
-            cfg = SimpleNamespace(instruction="I", example="{}", params=json.dumps(params), temperature=None, max_tokens=None, batch_size=50)
+            cfg = _config(instruction="I", example="{}", params=json.dumps(params), temperature=None, max_tokens=None, batch_size=50)
             with patch("deriva.services.extraction.classify_directories", return_value={"success": True, "data": {"nodes": [], "edges": []}}) as classify:
                 _extract_directory_classification(cfg, SimpleNamespace(name="r"), gm, MagicMock())
         close_database()
@@ -1654,7 +1701,7 @@ class TestExtractDirectoryClassification:
         close_database()
         with GraphManager() as gm:
             gm.add_node(DirectoryNode(name="billing", path="r/billing", repository_name="r"), node_id="dir::r::billing")
-            cfg = SimpleNamespace(instruction="I", example="{}", params=json.dumps(params), temperature=None, max_tokens=None, batch_size=50)
+            cfg = _config(instruction="I", example="{}", params=json.dumps(params), temperature=None, max_tokens=None, batch_size=50)
             with patch("deriva.services.extraction.classify_directories", return_value={"success": True, "data": {"nodes": [], "edges": []}}) as classify:
                 _extract_directory_classification(cfg, SimpleNamespace(name="r"), gm, MagicMock())
         close_database()
@@ -1670,7 +1717,7 @@ class TestExtractDirectoryClassification:
         close_database()
         with GraphManager() as gm:
             gm.add_node(DirectoryNode(name="billing", path="r/billing", repository_name="r"), node_id="dir::r::billing")
-            cfg = SimpleNamespace(instruction="I", example="{}", params=json.dumps({"skip_repository_name": 1}), temperature=None, max_tokens=None, batch_size=50)
+            cfg = _config(instruction="I", example="{}", params=json.dumps({"skip_repository_name": 1}), temperature=None, max_tokens=None, batch_size=50)
             with patch("deriva.services.extraction.classify_directories") as classify:
                 result = _extract_directory_classification(cfg, SimpleNamespace(name="r"), gm, MagicMock())
         close_database()
@@ -1704,7 +1751,7 @@ class TestExtractDirectoryClassification:
         with GraphManager() as gm:
             for name in names:
                 gm.add_node(DirectoryNode(name=name, path=f"r/{name}", repository_name="r"), node_id=f"dir::r::{name}")
-            cfg = SimpleNamespace(instruction="I", example="{}", params=None, temperature=None, max_tokens=None, batch_size=batch_size)
+            cfg = _config(instruction="I", example="{}", params=None, temperature=None, max_tokens=None, batch_size=batch_size)
             with patch("deriva.services.extraction.classify_directories", side_effect=classify) as spy:
                 result = _extract_directory_classification(cfg, SimpleNamespace(name="r"), gm, MagicMock())
         close_database()
@@ -1741,7 +1788,7 @@ class TestExtractDirectoryClassification:
         with GraphManager() as gm:
             for path in ("r/a/records", "r/b", "r/c/records"):
                 gm.add_node(DirectoryNode(name=path.rsplit("/", 1)[-1], path=path.removeprefix("r/"), repository_name="r"), node_id=f"dir::r::{path}")
-            cfg = SimpleNamespace(instruction="I", example="{}", params=None, temperature=None, max_tokens=None, batch_size=2)
+            cfg = _config(instruction="I", example="{}", params=None, temperature=None, max_tokens=None, batch_size=2)
             with patch("deriva.services.extraction.classify_directories", return_value={"success": True, "data": {"nodes": [], "edges": []}}) as classify:
                 _extract_directory_classification(cfg, SimpleNamespace(name="r"), gm, MagicMock())
         close_database()
@@ -1764,7 +1811,7 @@ class TestExtractDirectoryClassification:
                 "nodes": [{"id": "concept::r::billing", "labels": ["Graph:BusinessConcept"], "properties": {"conceptName": "Billing"}}],
                 "edges": [{"source": "dir::r::billing", "target": "concept::r::billing", "relationship_type": "REPRESENTS"}],
             }
-            cfg = SimpleNamespace(instruction="I", example="{}", params=None, temperature=None, max_tokens=None, batch_size=50)
+            cfg = _config(instruction="I", example="{}", params=None, temperature=None, max_tokens=None, batch_size=50)
             with patch("deriva.services.extraction.classify_directories", return_value={"success": True, "data": answer}):
                 result = _extract_directory_classification(cfg, SimpleNamespace(name="r"), gm, MagicMock())
         close_database()
@@ -2053,7 +2100,7 @@ class TestMethodLanguages:
             # The TypeDefinition step runs first and creates the class that holds the Java method
             orders = TypeDefinitionNode(name="Orders", type_category="class", file_path="app/Orders.java", repository_name="r")
             graph.add_node(orders, node_id="typedef::r::app_Orders.java::Orders")
-            cfg = SimpleNamespace(
+            cfg = _config(
                 node_type="Method",
                 input_sources=json.dumps({"files": [], "nodes": [{"label": "TypeDefinition", "property": "codeSnippet"}]}),
                 params=json.dumps(params) if params is not None else None,
@@ -2115,7 +2162,7 @@ class TestInheritanceResolution:
             for path, text in files.items():
                 (Path(tmpdir) / path).parent.mkdir(parents=True, exist_ok=True)
                 (Path(tmpdir) / path).write_text(text, encoding="utf-8")
-            cfg = SimpleNamespace(
+            cfg = _config(
                 node_type="TypeDefinition",
                 input_sources=json.dumps({"files": [{"type": "source", "subtype": "java"}]}),
                 params=None,
@@ -2249,6 +2296,16 @@ class TestRepositoryWalkExclusions:
 
         assert list_repo_files(tmp_path, [".git", "node_modules"]) == ["src/app.py"]
 
+    def test_model_files_are_xml_files_in_the_archimate_exchange_format(self, tmp_path):
+        from deriva.services.extraction import model_files
+
+        (tmp_path / "docs").mkdir()
+        (tmp_path / "docs" / "model.xml").write_text('<?xml version="1.0"?>\n<model xmlns="http://www.opengroup.org/xsd/archimate/3.0/" identifier="m"/>', encoding="utf-8")
+        (tmp_path / "pom.xml").write_text('<project xmlns="http://maven.apache.org/POM/4.0.0"/>', encoding="utf-8")
+        (tmp_path / "notes.md").write_text("http://www.opengroup.org/xsd/archimate/3.0/", encoding="utf-8")
+
+        assert model_files(tmp_path, ["docs/model.xml", "pom.xml", "notes.md"]) == {"docs/model.xml"}
+
     def test_extraction_walks_from_the_extended_root_so_deep_files_are_read(self, tmp_path):
         """Windows with long paths off cannot open a path over 260 characters unless the walk starts from \\\\?\\."""
         from types import SimpleNamespace
@@ -2315,7 +2372,9 @@ class TestConceptNodesMergeAcrossFiles:
         try:
             for key in order:
                 _add_concept_node(gm, occurrences[key], "concept::repo::user")
-            return gm.get_node("concept::repo::user")["properties"], gm.query("MATCH (n:Graph:BusinessConcept) WHERE 'actor' IN n.conceptTypes RETURN n.id AS id")
+            node = gm.get_node("concept::repo::user")
+            assert node is not None
+            return node["properties"], gm.query("MATCH (n:Graph:BusinessConcept) WHERE 'actor' IN n.conceptTypes RETURN n.id AS id")
         finally:
             gm.disconnect()
             close_database()
@@ -2517,7 +2576,7 @@ class TestBuildModuleStep:
         close_database()
 
     def _step(self, graph, tmpdir, node_type, params, repo="r"):
-        cfg = SimpleNamespace(node_type=node_type, params=json.dumps(params), input_sources="", instruction="", example="", temperature=None, max_tokens=None, batch_size=1)
+        cfg = _config(node_type=node_type, params=json.dumps(params), input_sources="", instruction="", example="", temperature=None, max_tokens=None, batch_size=1)
         return _run_extraction_step(cfg, SimpleNamespace(name=repo), Path(tmpdir), [], [], graph, None, MagicMock())
 
     def _files(self, graph, tmpdir, files, repo="r"):
@@ -2670,6 +2729,38 @@ class TestBuildModuleStep:
         excluded = {r["id"].split("::")[-1]: r["x"] for r in graph.query("MATCH (m:Graph:BuildModule) RETURN m.id AS id, m.excluded AS x")}
         assert excluded == {"lib": None, "data": "data-only library", "only": "part of one unit", "tool": None, "probe": "no entry point"}
 
+    def test_folders_with_the_same_project_layout_stay_components_whoever_uses_them(self, graph):
+        """Nobody imports orders, bills or spare; the first two repeat a layout, so they are modules of the design."""
+        files = {"api/Api.csproj": ("unknown", "csproj", '<Project Sdk="Microsoft.NET.Sdk.Web"></Project>'), "api/Program.cs": ("source", "csharp", "class Program {}\n")}
+        for project in ("mods/orders/core", "mods/orders/data", "mods/bills/core", "mods/bills/data", "spare"):
+            files[f"{project}/P.csproj"] = ("unknown", "csproj", '<Project Sdk="Microsoft.NET.Sdk" />')
+            files[f"{project}/Thing.cs"] = ("source", "csharp", "class Thing {}\n")
+        with tempfile.TemporaryDirectory() as tmpdir:
+            self._files(graph, tmpdir, files)
+            self._step(graph, tmpdir, "DeployableUnit", {"code_subtypes": ["csharp"]})
+            self._step(graph, tmpdir, "BuildModule", {"manifests": ["*.csproj"], "code_subtypes": ["csharp"], "min_behaviour": 1})
+
+        excluded = {r["path"]: r["x"] for r in graph.query("MATCH (m:Graph:BuildModule) RETURN m.path AS path, m.excluded AS x")}
+        assert excluded == {"r/api": None, "r/mods/bills": None, "r/mods/orders": None, "r/spare": "no entry point"}
+        units = [r["name"] for r in graph.query("MATCH (u:Graph:DeployableUnit) RETURN u.name AS name")]
+        assert units == ["api"]
+
+    def test_a_library_repository_keeps_its_own_module_as_the_component(self, graph):
+        """Its only units are examples (test words in their folder); without the rule the model has no component."""
+        files = {
+            "pyproject.toml": ("build", "toml", '[project]\nname = "lib"\n'),
+            "src/lib/core.py": ("source", "python", "def run():\n    return 1\n"),
+            "examples/demo/pyproject.toml": ("build", "toml", '[project]\nname = "demo"\n[project.scripts]\ndemo = "demo:main"\n'),
+            "examples/demo/demo.py": ("source", "python", "def main():\n    return 1\n"),
+        }
+        with tempfile.TemporaryDirectory() as tmpdir:
+            self._files(graph, tmpdir, files, repo="lib")
+            self._step(graph, tmpdir, "DeployableUnit", {"code_subtypes": ["python"]}, repo="lib")
+            self._step(graph, tmpdir, "BuildModule", {**self.MODULE_PARAMS, "min_behaviour": 1, "test_words": ["examples"]}, repo="lib")
+
+        excluded = {r["id"]: r["x"] for r in graph.query("MATCH (m:Graph:BuildModule) RETURN m.id AS id, m.excluded AS x")}
+        assert excluded == {"module::lib::lib": None, "module::lib::examples/demo": "test-only"}
+
     def test_a_folder_of_code_outside_every_unit_that_two_units_use_with_behaviour_is_a_library(self, graph):
         """shared/lib: two units import it, it has behaviour; shared/data: accessors only; shared/one: one unit imports it."""
         from deriva.adapters.graph.models import MethodNode
@@ -2787,7 +2878,7 @@ class TestDeployableUnitStep:
             (Path(tmpdir) / path).write_text(text, encoding="utf-8")
             node = FileNode(name=Path(path).name, path=path, repository_name=repo, file_type=file_type, subtype=subtype)
             graph.add_node(node, node_id=f"file::{repo}::{path.replace('/', '_')}")
-        cfg = SimpleNamespace(
+        cfg = _config(
             node_type="DeployableUnit",
             params=json.dumps(params or {"code_subtypes": ["java", "python"]}),
             input_sources="",
@@ -2798,6 +2889,21 @@ class TestDeployableUnitStep:
             batch_size=1,
         )
         return _run_extraction_step(cfg, SimpleNamespace(name=repo), Path(tmpdir), [], [], graph, None, MagicMock())
+
+    @pytest.mark.parametrize("check", ["Decide.", {"instructions": "Decide."}, {"instruction": ""}, {"instruction": 3}])
+    def test_a_malformed_tooling_check_is_an_error_not_a_silent_off(self, graph, tmp_path, check):
+        with pytest.raises(ValueError, match="tool_check"):
+            self._run(graph, tmp_path, {"shop/app.py": ("source", "python", "print(1)\n")}, params={"code_subtypes": ["python"], "tool_check": check})
+
+    def test_without_an_llm_the_tooling_check_warns_that_it_was_skipped(self, graph, tmp_path):
+        files = {
+            f"{u}/{f}": spec for u in ("shop", "loader") for f, spec in (("Dockerfile", ("infra", "docker", "FROM python:3.12\n")), ("app.py", ("source", "python", "print(1)\n")))
+        }
+
+        result = self._run(graph, tmp_path, files, params={"code_subtypes": ["python"], "tool_check": {"instruction": "Decide."}})
+
+        assert result["errors"] == []
+        assert any("tooling check" in w and "no LLM" in w for w in result.get("warnings", []))
 
     def test_a_folder_whose_file_defines_a_serverless_handler_becomes_a_function_unit(self, graph):
         from deriva.adapters.graph.models import MethodNode
@@ -2968,6 +3074,15 @@ class TestDataEntityStep:
 
         assert importers == {"r/app/REC.cpy": 2}  # stored paths carry the repository
 
+    def test_test_words_are_a_list_of_words(self):
+        """``test_words`` is a list of words in the DataEntity params; anything else under that key is refused."""
+        from deriva.services.extraction import _entity_rules
+
+        assert _entity_rules(json.dumps({"test_words": ["test", "tests"]})).test_words == ("test", "tests")
+        assert _entity_rules(json.dumps({})).test_words == ()
+        with pytest.raises(ValueError):
+            _entity_rules(json.dumps({"test_words": "tests"}))
+
     def test_entities_are_written_with_their_types_and_the_rest_is_reported(self, graph):
         from deriva.adapters.graph.models import TypeDefinitionNode
 
@@ -3074,7 +3189,7 @@ class TestRerunnableSteps:
             )
 
     def _run(self, graph):
-        cfg = SimpleNamespace(
+        cfg = _config(
             node_type="DataEntity",
             params=json.dumps({"entity_annotations": ["Entity"]}),
             input_sources="",
@@ -3207,7 +3322,7 @@ def test_a_steps_own_node_it_only_links_to_again_is_kept():
 
     close_database()
     with GraphManager() as gm:
-        cfg = SimpleNamespace(node_type="TypeDefinition")
+        cfg = _config(node_type="TypeDefinition")
         with patch.object(service, "_run_step_writes", side_effect=step):
             service._run_extraction_step(cfg, SimpleNamespace(name="r"), Path("."), [], [], gm, None, MagicMock())
             result = service._run_extraction_step(cfg, SimpleNamespace(name="r"), Path("."), [], [], gm, None, MagicMock())
@@ -3273,6 +3388,23 @@ class TestDeploymentStep:
         assert [(r["s"], r["u"]) for r in serves] == [("Java runtime", "unit::r::shop"), ("PostgreSQL", "unit::r::shop")]
         assert result["software"] == {"listed": 2, "fallback": 0, "unconnected": 0}
 
+    def test_the_technology_image_labels_name_the_software_an_image_runs(self, graph, tmp_path):
+        """With the image labels the Technology step keeps on the repository, an image off the list runs the system its
+        label names and an image labelled none is no software."""
+        from datetime import datetime
+
+        from deriva.adapters.graph.models import RepositoryNode
+
+        compose = "services:\n  shop:\n    build: ./shop\n    depends_on: [cache, admin]\n  cache:\n    image: acme/keyvalue:2\n  admin:\n    image: acme/dbadmin:1\n"
+        self._repo(graph, tmp_path, {"docker-compose.yml": compose})
+        graph.add_node(RepositoryNode(name="r", url="", created_at=datetime(2026, 1, 1)), node_id="repo::r")
+        graph.update_node_property("repo::r", "imageLabels", ["acme/dbadmin=", "acme/keyvalue=Key Value Store"])
+
+        result = _run_extraction_step(self._cfg(self.PARAMS), SimpleNamespace(name="r"), tmp_path, [], [], graph, None, MagicMock())
+
+        assert result["errors"] == []
+        assert [r["s"] for r in graph.query("MATCH (s:Graph:Software) RETURN s.name AS s ORDER BY s")] == ["Key Value Store"]
+
     def test_a_cdk_app_is_read_statically_and_is_the_primary_environment(self, graph, tmp_path):
         params = {
             **self.PARAMS,
@@ -3324,6 +3456,46 @@ class TestDeploymentStep:
     def test_the_signals_are_validated(self, graph, tmp_path):
         with pytest.raises(ValueError, match="Deployment"):
             _run_extraction_step(self._cfg({**self.PARAMS, "markers": [{"pattern": "("}]}), SimpleNamespace(name="r"), tmp_path, [], [], graph, None, MagicMock())
+
+    ASPIRE = {"host": "DistributedApplication.CreateBuilder", "suffixes": [".cs"], "projects": ["AddProject"], "resource_prefix": "Add", "references": ["WithReference"]}
+
+    def test_an_aspire_app_host_is_the_environment_its_projects_and_resources_run_in(self, graph, tmp_path):
+        host = (
+            "var builder = DistributedApplication.CreateBuilder(args);\n"
+            'var db = builder.AddPostgres("db");\n'
+            'builder.AddProject<Projects.Shop>("shop").WithReference(db);\n'
+            'builder.AddProject<Projects.Billing>("billing");\n'
+        )
+        # A test host (a test file) declares its own resources: it is no environment of the system
+        fixture = 'var builder = DistributedApplication.CreateBuilder();\nvar cache = builder.AddRedis("cache");\n'
+        self._repo(graph, tmp_path, {"host/AppHost.cs": host, "shop/Program.cs": "var app = WebApplication.CreateBuilder(args);\n", "tests/Fixture.cs": fixture})
+        graph.update_node_property("file::r::host/AppHost.cs", "fileType", "source")
+        graph.update_node_property("file::r::tests/Fixture.cs", "fileType", "test")
+
+        result = _run_extraction_step(self._cfg({**self.PARAMS, "aspire": self.ASPIRE}), SimpleNamespace(name="r"), tmp_path, [], [], graph, None, MagicMock())
+
+        assert result["errors"] == [] and result["environment"] == "aspire r/host/AppHost.cs" and result["other_environments"] == []
+        (env,) = graph.query("MATCH (e:Graph:Environment) RETURN e.id AS id, e.name AS name")
+        assert (env["id"], env["name"]) == ("environment::r::aspire", "Aspire")
+        deploys = graph.query("MATCH (:Graph:Environment)-[:`Graph:RUNS`]->(d:Graph:Deployment)-[:`Graph:DEPLOYS`]->(u) RETURN d.name AS d, u.id AS u ORDER BY d")
+        assert [(r["d"], r["u"]) for r in deploys] == [("billing", "unit::r::billing"), ("shop", "unit::r::shop")]
+        # A resource is software (on the list), no deployment
+        assert [r["d"] for r in graph.query("MATCH (d:Graph:Deployment) RETURN d.name AS d ORDER BY d")] == ["billing", "shop"]
+        serves = graph.query("MATCH (s:Graph:Software)-[:`Graph:SERVES`]->(u:Graph:DeployableUnit) RETURN s.name AS s, u.id AS u")
+        assert [(r["s"], r["u"]) for r in serves] == [("PostgreSQL", "unit::r::shop")]
+
+    def test_without_aspire_signals_an_app_host_is_no_environment(self, graph, tmp_path):
+        self._repo(graph, tmp_path, {"host/AppHost.cs": 'var b = DistributedApplication.CreateBuilder(args);\nb.AddProject<Projects.Shop>("shop");\n'})
+        graph.update_node_property("file::r::host/AppHost.cs", "fileType", "source")
+
+        result = _run_extraction_step(self._cfg(self.PARAMS), SimpleNamespace(name="r"), tmp_path, [], [], graph, None, MagicMock())
+
+        assert result["environment"] is None
+
+    def test_the_aspire_signals_are_validated(self, graph, tmp_path):
+        for wrong in ({**self.ASPIRE, "projects": "AddProject"}, {**self.ASPIRE, "host": ""}, {**self.ASPIRE, "colour": "x"}, {**self.ASPIRE, "suffixes": [""]}):
+            with pytest.raises(ValueError, match="aspire"):
+                _run_extraction_step(self._cfg({**self.PARAMS, "aspire": wrong}), SimpleNamespace(name="r"), tmp_path, [], [], graph, None, MagicMock())
 
 
 class TestCooperationStep:
@@ -3454,7 +3626,7 @@ class TestDataDomainStep:
 
     def _run(self, graph, root, params=None, entity_params=None):
         entity_params = json.dumps(entity_params or {"entity_annotations": ["Entity"]})
-        entity_cfg = SimpleNamespace(node_type="DataEntity", params=entity_params, input_sources="", instruction="", example="", temperature=None, max_tokens=None, batch_size=1)
+        entity_cfg = _config(node_type="DataEntity", params=entity_params, input_sources="", instruction="", example="", temperature=None, max_tokens=None, batch_size=1)
         _run_extraction_step(entity_cfg, SimpleNamespace(name="r"), root, [], [], graph, None, MagicMock())  # the entities come first
         with patch("deriva.services.extraction.config.get_extraction_config", return_value=entity_cfg):
             return _run_extraction_step(self._cfg(params), SimpleNamespace(name="r"), root, [], [], graph, None, MagicMock())
@@ -3565,6 +3737,66 @@ class TestBusinessLayerStep:
     def test_the_signals_are_validated(self, graph, tmp_path):
         with pytest.raises(ValueError, match="BusinessLayer"):
             _run_extraction_step(self._cfg({"markers": "require_role"}), SimpleNamespace(name="r"), tmp_path, [], [], graph, None, MagicMock())
+        with pytest.raises(ValueError, match="status_members"):
+            _run_extraction_step(self._cfg({**self.PARAMS, "status_members": "yes"}), SimpleNamespace(name="r"), tmp_path, [], [], graph, None, MagicMock())
+
+    def test_verb_names_add_what_happens_to_the_object_to_the_name_candidates_when_switched_on(self, graph, tmp_path):
+        from unittest.mock import patch
+
+        from deriva.adapters.graph.models import DataDomainNode, DataEntityNode, FileNode, TypeDefinitionNode
+
+        text = 'class LeaseApplication(Base):\n    status = Column(String(20), default="DRAFT")\n\ndef go(app):\n    app.status = "SUBMITTED"\n    app.status = "APPROVED"\n'
+        (tmp_path / "lease").mkdir()
+        (tmp_path / "lease" / "models.py").write_text(text, encoding="utf-8")
+        graph.add_node(FileNode(name="models.py", path="lease/models.py", repository_name="r", file_type="source", subtype="python"), node_id="file::r::lease/models.py")
+        graph.add_node(TypeDefinitionNode(name="LeaseApplication", type_category="class", file_path="lease/models.py", repository_name="r"), node_id="typedef::r::LeaseApplication")
+        graph.add_node(DataEntityNode(name="Lease Application", signal="orm entity", repository_name="r"), node_id="entity::r::leaseapplication")
+        graph.add_edge("entity::r::leaseapplication", "typedef::r::LeaseApplication", "INCLUDES")
+        graph.add_node(DataDomainNode(name="Lease Application", kind="single", repository_name="r", business_object="Lease Application"), node_id="domain::r::leaseapplication")
+        graph.add_edge("domain::r::leaseapplication", "entity::r::leaseapplication", "INCLUDES")
+
+        verbs = {"SUBMITTED": "Submit", "APPROVED": "Approve"}
+        with patch("deriva.services.extraction.state_verbs", return_value=verbs) as read, patch("deriva.services.extraction.has_english", return_value=True):
+            off = _run_extraction_step(self._cfg(self.PARAMS), SimpleNamespace(name="r"), tmp_path, [], [], graph, None, MagicMock())
+            assert read.call_count == 0
+            ((before,),) = [graph.query("MATCH (l:Graph:Lifecycle) RETURN l.nameCandidates AS names")]
+            on = _run_extraction_step(self._cfg({**self.PARAMS, "verb_names": True}), SimpleNamespace(name="r"), tmp_path, [], [], graph, None, MagicMock())
+        ((after,),) = [graph.query("MATCH (l:Graph:Lifecycle) RETURN l.nameCandidates AS names, l.states AS states")]
+
+        assert off["errors"] == [] and on["errors"] == [] and not on.get("warnings")
+        assert list(before["names"]) == ["Lease Application Lifecycle"]
+
+        # Switched on without the English pipeline: no verbs, and the step says so (the config differs from what it does)
+        with patch("deriva.services.extraction.has_english", return_value=False):
+            bare = _run_extraction_step(self._cfg({**self.PARAMS, "verb_names": True}), SimpleNamespace(name="r"), tmp_path, [], [], graph, None, MagicMock())
+        assert bare["errors"] == [] and any("verb_names" in w and "English" in w for w in bare.get("warnings", []))
+        in_state_order = [f"{verbs[s]} Lease Application" for s in after["states"] if s in verbs]
+        assert list(after["names"]) == ["Lease Application Lifecycle", *in_state_order, "Manage Lease Application"] and len(in_state_order) == 2
+
+    def test_status_members_take_a_status_type_beside_the_domain_only_when_switched_on(self, graph, tmp_path):
+        from deriva.adapters.graph.models import DataDomainNode, DataEntityNode, FileNode, TypeDefinitionNode
+
+        files = {
+            "shipment/Shipment.java": "public class Shipment { private Delivery delivery; }",
+            "shipment/TransportStatus.java": "public enum TransportStatus { NOT_RECEIVED, IN_PORT, ONBOARD, CLAIMED }",
+        }
+        for path, text in files.items():
+            (tmp_path / path).parent.mkdir(parents=True, exist_ok=True)
+            (tmp_path / path).write_text(text, encoding="utf-8")
+            graph.add_node(FileNode(name=path.rsplit("/", 1)[-1], path=path, repository_name="r", file_type="source", subtype="java"), node_id=f"file::r::{path}")
+        graph.add_node(TypeDefinitionNode(name="Shipment", type_category="class", file_path="shipment/Shipment.java", repository_name="r"), node_id="typedef::r::Shipment")
+        graph.add_node(DataEntityNode(name="Shipment", signal="orm entity", repository_name="r"), node_id="entity::r::shipment")
+        graph.add_edge("entity::r::shipment", "typedef::r::Shipment", "INCLUDES")
+        graph.add_node(DataDomainNode(name="Shipment", kind="single", repository_name="r", business_object="Shipment"), node_id="domain::r::shipment")
+        graph.add_edge("domain::r::shipment", "entity::r::shipment", "INCLUDES")
+
+        off = _run_extraction_step(self._cfg(self.PARAMS), SimpleNamespace(name="r"), tmp_path, [], [], graph, None, MagicMock())
+        on = _run_extraction_step(self._cfg({**self.PARAMS, "status_members": True}), SimpleNamespace(name="r"), tmp_path, [], [], graph, None, MagicMock())
+
+        assert (off["errors"], off["lifecycles"]) == ([], 0)
+        assert (on["errors"], on["lifecycles"]) == ([], 1)
+        (life,) = graph.query("MATCH (l:Graph:Lifecycle) RETURN l.states AS states")
+        assert list(life["states"]) == ["NOT_RECEIVED", "IN_PORT", "ONBOARD", "CLAIMED"]
 
 
 def test_names_that_share_a_slug_get_ids_of_their_own():
@@ -3658,3 +3890,85 @@ class TestReadErrorMessages:
 
         with patch("builtins.open", side_effect=PermissionError(13, "Permission denied", r"\\?\C:\x\a.py")):
             assert _unreadable_reason(tmp_path / "a.py", tmp_path / "a.py") == "[Errno 13] Permission denied"
+
+
+class TestModelFileRoots:
+    def _found(self, tmp_path, text):
+        from deriva.services.extraction import model_files
+
+        (tmp_path / "a.xml").write_text(text, encoding="utf-8")
+        return model_files(tmp_path, ["a.xml"])
+
+    def test_a_mention_is_no_model(self, tmp_path):
+        assert not self._found(tmp_path, "<!-- see http://www.opengroup.org/xsd/archimate/3.0/ --><config><a>1</a></config>")
+        assert not self._found(tmp_path, "<notes>http://www.opengroup.org/xsd/archimate/3.0/</notes>")
+
+    def test_a_long_header_does_not_hide_a_model(self, tmp_path):
+        comment = "<!-- " + "licence text " * 500 + "-->"
+        assert self._found(tmp_path, f'<?xml version="1.0"?>{comment}<model xmlns="http://www.opengroup.org/xsd/archimate/3.0/"></model>') == {"a.xml"}
+
+
+def test_the_read_limit_reaches_the_structural_readers(tmp_path):
+    from deriva.services.extraction import _read_checkout, _read_limit
+
+    (tmp_path / "big.txt").write_text("x" * 5000, encoding="utf-8")
+    assert _read_checkout(tmp_path, "r", "big.txt") is not None
+    token = _read_limit.set(1000)
+    try:
+        assert _read_checkout(tmp_path, "r", "big.txt") is None
+    finally:
+        _read_limit.reset(token)
+
+
+def test_the_read_limit_ends_with_its_step(tmp_path):
+    from unittest.mock import MagicMock, patch
+
+    from deriva.services import extraction
+
+    seen = []
+    cfg = MagicMock(node_type="Repository")
+    record = lambda *a: seen.append(extraction._read_limit.get()) or {}  # noqa: E731 - a one-line helper
+    with patch.object(extraction.config, "get_max_read_bytes", return_value=1000), patch.object(extraction, "_extract_repository", side_effect=record):
+        extraction._run_step_writes(cfg, MagicMock(), tmp_path, [], [], MagicMock(), None, MagicMock())
+    assert seen == [1000]
+    assert extraction._read_limit.get() is None
+
+
+class TestStepWarningsReachTheRun:
+    """A step that ran and returns warnings (the BusinessLayer's missing English pipeline, unclassified directories)
+    gets them into the run's result, where the CLI prints them."""
+
+    def test_a_step_s_warnings_are_in_the_run_result(self, tmp_path):
+        repo = MagicMock()
+        repo.name, repo.path, repo.url, repo.branch = "r", str(tmp_path), "https://example.com/r.git", "main"
+        step = MagicMock()
+        step.node_type, step.input_sources = "Repository", None
+        written = {"nodes_created": 1, "edges_created": 0, "errors": [], "warnings": ["the step's own warning"]}
+        with (
+            patch("deriva.services.extraction.RepoManager", **{"return_value.list_repositories.return_value": [repo]}),
+            patch("deriva.services.extraction.config.get_extraction_configs", return_value=[step]),
+            patch("deriva.services.extraction.config.get_file_types", return_value=[]),
+            patch("deriva.services.extraction._run_extraction_step", return_value=written),
+        ):
+            result = run_extraction(MagicMock(), MagicMock())
+
+        assert result["success"] is True
+        assert any("the step's own warning" in w for w in result["warnings"])
+
+    def test_the_iterator_s_final_update_carries_the_step_s_warnings(self, tmp_path):
+        from deriva.services.extraction import run_extraction_iter
+
+        repo = MagicMock()
+        repo.name, repo.path, repo.url, repo.branch = "r", str(tmp_path), "https://example.com/r.git", "main"
+        step = MagicMock()
+        step.node_type, step.input_sources = "Repository", None
+        written = {"nodes_created": 1, "edges_created": 0, "errors": [], "warnings": ["the step's own warning"]}
+        with (
+            patch("deriva.services.extraction.RepoManager", **{"return_value.list_repositories.return_value": [repo]}),
+            patch("deriva.services.extraction.config.get_extraction_configs", return_value=[step]),
+            patch("deriva.services.extraction.config.get_file_types", return_value=[]),
+            patch("deriva.services.extraction._run_extraction_step", return_value=written),
+        ):
+            updates = list(run_extraction_iter(MagicMock(), MagicMock()))
+
+        assert any("the step's own warning" in w for w in updates[-1].stats["warnings"])

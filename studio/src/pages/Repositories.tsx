@@ -1,16 +1,16 @@
 import { useCallback, useEffect, useState } from "react";
 
 import { repositories } from "../api/client";
-import type { Coverage, Repository, RepositoryData, RunSummary } from "../api/types";
+import type { Coverage, CoverageRow, Repository, RepositoryData, RunSummary } from "../api/types";
 import { downloadText } from "../components/download";
 import { size } from "../components/size";
 
 const count = (n: number) => n.toLocaleString("en-US");
 
 
-/** "2026-10-18 22:41 · all · finished", or a dash when the repository has no such run */
-function runLine(run: RunSummary | null): string {
-  if (!run) return "none yet";
+/** "2026-10-18 22:41 · all · finished"; without a studio run, whether its result exists (the CLI keeps no run record) */
+function runLine(run: RunSummary | null, built: boolean): string {
+  if (!run) return built ? "run outside the studio" : "none yet";
   const when = new Date(run.started_at * 1000);
   const pad = (n: number) => String(n).padStart(2, "0");
   const date = `${when.getFullYear()}-${pad(when.getMonth() + 1)}-${pad(when.getDate())} ${pad(when.getHours())}:${pad(when.getMinutes())}`;
@@ -36,6 +36,12 @@ function message(reason: unknown): string {
 
 // The extensions with the most files; the CLI's coverage --json has every one
 const EXTENSIONS_SHOWN = 8;
+
+/** An extension's file types: the one type, or each with its files when there are several ("test 246, source 210"). */
+function fileTypes(row: CoverageRow): string {
+  if (row.file_types.length === 1) return row.file_types[0].file_type;
+  return row.file_types.map((t) => `${t.file_type} ${count(t.files)}`).join(", ");
+}
 
 /** What of the checkout reached the graph: the verdict with its reasons, notes, the largest extensions, and the
  * files that did not make it as a download. */
@@ -67,7 +73,8 @@ function CoverageSection({ name, coverage, note }: { name: string; coverage: Cov
           <tr>
             <th>Extension</th>
             <th>Files</th>
-            <th>Read by</th>
+            <th>File type</th>
+            <th>Code read by</th>
             <th>Gave symbols</th>
           </tr>
         </thead>
@@ -76,7 +83,10 @@ function CoverageSection({ name, coverage, note }: { name: string; coverage: Cov
             <tr key={row.extension}>
               <td className="mono">{row.extension}</td>
               <td>{row.in_graph === row.files ? count(row.files) : `${count(row.in_graph)} of ${count(row.files)}`}</td>
-              <td>{row.reader ?? "none"}</td>
+              <td>{fileTypes(row)}</td>
+              {/* The type and method steps read code (by parser or llm): an extension without source (documentation, assets) has
+                  no reader to name; one with source files and no reader says none, even when its tests outnumber them */}
+              <td>{row.reader ?? (row.file_types.some((t) => t.file_type === "source") ? "none" : "")}</td>
               <td>{row.reader ? count(row.with_symbols) : ""}</td>
             </tr>
           ))}
@@ -416,9 +426,9 @@ export function Repositories() {
                 <span className="muted">On disk</span>
                 <span>{size(shown.database_bytes)}</span>
                 <span className="muted">Extraction</span>
-                <span>{runLine(shown.last_runs.extraction)}</span>
+                <span>{runLine(shown.last_runs.extraction, shown.graph.nodes > 0)}</span>
                 <span className="muted">Derivation</span>
-                <span>{runLine(shown.last_runs.derivation)}</span>
+                <span>{runLine(shown.last_runs.derivation, shown.model.elements > 0)}</span>
               </div>
             ) : (
               <div className="bd note">{dataNote ?? "Counting…"}</div>

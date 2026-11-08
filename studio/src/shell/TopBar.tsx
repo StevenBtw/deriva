@@ -85,7 +85,7 @@ export function TopBar({ mode, onModeChange, db, version, benchmark = true, envi
           <BugIcon />
           Report issue
         </a>
-        <span className={`util db-${db.state}`} title={dbTitle}>
+        <span className={`util db-${db.unanswered ? "unanswered" : db.state}`} title={dbTitle}>
           <span className="dot" aria-hidden="true" />
           {dbLabel}
         </span>

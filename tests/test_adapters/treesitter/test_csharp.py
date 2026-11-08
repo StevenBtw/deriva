@@ -25,7 +25,7 @@ def extractor():
 @pytest.fixture
 def parser(extractor):
     """Provide a tree-sitter parser for C#."""
-    raw_lang = extractor.get_language()
+    raw_lang: object = extractor.get_language()
     language = tree_sitter.Language(raw_lang)
     return tree_sitter.Parser(language)
 
@@ -49,7 +49,7 @@ class TestCSharpExtractorProperties:
 
     def test_get_language_returns_valid_language(self, extractor):
         """Should return a valid tree-sitter language."""
-        lang = extractor.get_language()
+        lang: object = extractor.get_language()
         # A grammar tree-sitter can parse with
         import tree_sitter
 
@@ -491,6 +491,12 @@ class TestCSharpExtractImports:
         assert len(imports) == 1
         # Alias handling varies by tree-sitter version
 
+    def test_an_alias_using_names_its_target_and_keeps_the_alias_apart(self, extractor, parser):
+        source = "using Order = Acme.Core.Order;\nusing Core = Acme.Core;"
+        imports = extractor.extract_imports(parse(parser, source), source.encode("utf-8"))
+
+        assert [(i.module, i.alias, i.is_from_import) for i in imports] == [("Acme.Core.Order", "Order", False), ("Acme.Core", "Core", False)]
+
     def test_extracts_static_using(self, extractor, parser):
         """Should extract static using directive."""
         source = "using static System.Math;"
@@ -899,3 +905,33 @@ public class MyClass {
 
         assert len(methods) == 1
         assert len(methods[0].parameters) == 0
+
+
+@pytest.mark.parametrize(
+    ("source", "target"),
+    [
+        ("using IntArr = int[];", "int[]"),
+        ("using Pointer = int*;", "int*"),
+        ("using Maybe = Foo?;", "Foo?"),
+        ("using Pair = (int, string);", "(int, string)"),
+        ("using Number = int;", "int"),
+    ],
+)
+def test_an_alias_of_any_type_keeps_its_alias_and_names_its_target(extractor, parser, source, target):
+    (imp,) = extractor.extract_imports(parse(parser, source), source.encode("utf-8"))
+
+    assert (imp.alias, imp.module) == (source.split()[1], target)
+
+
+def test_an_alias_of_a_qualified_or_generic_type_is_unchanged(extractor, parser):
+    source = "using Order = Acme.Core.Order;\nusing Orders = System.Collections.Generic.List<Acme.Core.Order>;\nglobal using Bill = Acme.Core.Bill;"
+    imports = extractor.extract_imports(parse(parser, source), source.encode("utf-8"))
+
+    assert [(i.alias, i.module) for i in imports] == [("Order", "Acme.Core.Order"), ("Orders", "System.Collections.Generic.List<Acme.Core.Order>"), ("Bill", "Acme.Core.Bill")]
+
+
+def test_a_comment_after_the_equals_is_no_alias_target(extractor, parser):
+    source = "using Number = /* the count */ int;"
+    (imp,) = extractor.extract_imports(parse(parser, source), source.encode("utf-8"))
+
+    assert (imp.alias, imp.module) == ("Number", "int")

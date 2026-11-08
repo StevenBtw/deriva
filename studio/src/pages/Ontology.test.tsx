@@ -75,9 +75,17 @@ const INTERMEDIATE: IntermediateOntology = {
 
 const OUTPUT: OutputOntology = {
   element_types: [
-    { name: "Node", layer: "Technology", count: 2, step: { enabled: true, version: 4 } },
-    { name: "BusinessActor", layer: "Business", count: 0, step: null },
-    { name: "ApplicationService", layer: "Application", count: 1, step: { enabled: false, version: 3 } },
+    { name: "Node", layer: "Technology", aspect: "Structure", count: 2, step: { enabled: true, version: 4 }, steps: [{ name: "Node", enabled: true, version: 4, shipped: true }], needs: [] },
+    { name: "BusinessActor", layer: "Business", aspect: "Structure", count: 0, step: null, steps: [], needs: [] },
+    {
+      name: "ApplicationService",
+      layer: "Application",
+      aspect: "Behavior",
+      count: 1,
+      step: { enabled: false, version: 3 },
+      steps: [{ name: "ApplicationService", enabled: false, version: 3, shipped: true }],
+      needs: [],
+    },
   ],
   relationship_types: [{ name: "Serving", count: 2 }],
   rules: [{ source: "ApplicationService", target: "Node", direct: ["Serving"], derived: ["Flow"] }],
@@ -291,6 +299,143 @@ describe("Output ontology", () => {
 
     await userEvent.click(screen.getByRole("switch", { name: "Enable ApplicationService" }));
     expect(configs.setEnabled).toHaveBeenCalledWith("derivation", "ApplicationService", true);
+  });
+
+  const SELECTION: OutputOntology = {
+    ...OUTPUT,
+    element_types: [
+      {
+        name: "BusinessActor",
+        layer: "Business",
+        aspect: "Structure",
+        count: 2,
+        step: { enabled: true, version: 1 },
+        steps: [
+          { name: "BusinessActor", enabled: true, version: 1, shipped: true },
+          { name: "DocumentationActors", enabled: true, version: 1, shipped: true },
+        ],
+        needs: ["ApplicationComponent"],
+      },
+      { name: "BusinessObject", layer: "Business", aspect: "Passive", count: 3, step: { enabled: true, version: 2 }, steps: [{ name: "BusinessObject", enabled: true, version: 2, shipped: true }], needs: [] },
+      { name: "BusinessProcess", layer: "Business", aspect: "Behavior", count: 0, step: { enabled: false, version: 1 }, steps: [{ name: "BusinessProcess", enabled: false, version: 1, shipped: false }], needs: [] },
+      { name: "ApplicationComponent", layer: "Application", aspect: "Structure", count: 1, step: { enabled: false, version: 1 }, steps: [{ name: "ApplicationComponent", enabled: false, version: 1, shipped: true }], needs: [] },
+    ],
+  };
+
+  it("switches every step that makes a type, and names the extra ones", async () => {
+    vi.mocked(ontology.output).mockResolvedValue(SELECTION);
+    render(<OutputOntologyPage />);
+
+    const actor = await screen.findByRole("switch", { name: "Enable BusinessActor" });
+    expect(actor).toHaveAttribute("aria-checked", "true");
+    expect(screen.getByText("BusinessActor").closest("tr")).toHaveTextContent("DocumentationActors");
+
+    await userEvent.click(actor);
+
+    await waitFor(() => expect(configs.setEnabled).toHaveBeenCalledWith("derivation", "DocumentationActors", false));
+    expect(configs.setEnabled).toHaveBeenCalledWith("derivation", "BusinessActor", false);
+  });
+
+  it("turns a whole layer or aspect off, and a layer back on as shipped", async () => {
+    vi.mocked(configs.setEnabled).mockClear();
+    vi.mocked(ontology.output).mockResolvedValue(SELECTION);
+    render(<OutputOntologyPage />);
+
+    await userEvent.click(await screen.findByRole("switch", { name: "Derive the Business layer" }));
+    await waitFor(() => expect(vi.mocked(configs.setEnabled).mock.calls.map((c) => c[1]).sort()).toEqual(["BusinessActor", "BusinessObject", "DocumentationActors"]));
+    expect(vi.mocked(configs.setEnabled).mock.calls.every((c) => c[2] === false)).toBe(true);
+
+    vi.mocked(configs.setEnabled).mockClear();
+    await userEvent.click(screen.getByRole("switch", { name: "Derive Business passive structure" }));
+    await waitFor(() => expect(configs.setEnabled).toHaveBeenCalledWith("derivation", "BusinessObject", false));
+  });
+
+  it("gives a switched-off layer its shipped steps back, not the ones shipped off", async () => {
+    vi.mocked(configs.setEnabled).mockClear();
+    const off = SELECTION.element_types.map((t) => ({ ...t, steps: t.steps.map((s) => ({ ...s, enabled: false })) }));
+    vi.mocked(ontology.output).mockResolvedValue({ ...SELECTION, element_types: off });
+    render(<OutputOntologyPage />);
+
+    await userEvent.click(await screen.findByRole("switch", { name: "Derive the Business layer" }));
+
+    await waitFor(() => expect(vi.mocked(configs.setEnabled).mock.calls.map((c) => c[1]).sort()).toEqual(["BusinessActor", "BusinessObject", "DocumentationActors"]));
+    expect(configs.setEnabled).not.toHaveBeenCalledWith("derivation", "BusinessProcess", true);
+    expect(vi.mocked(configs.setEnabled).mock.calls.every((c) => c[2] === true)).toBe(true);
+  });
+
+  it("a type shipped off can still be chosen on its own", async () => {
+    vi.mocked(configs.setEnabled).mockClear();
+    vi.mocked(ontology.output).mockResolvedValue(SELECTION);
+    render(<OutputOntologyPage />);
+
+    await userEvent.click(await screen.findByRole("switch", { name: "Enable BusinessProcess" }));
+
+    await waitFor(() => expect(configs.setEnabled).toHaveBeenCalledWith("derivation", "BusinessProcess", true));
+  });
+
+  it("turns on an aspect none of whose steps ship on, instead of doing nothing", async () => {
+    vi.mocked(configs.setEnabled).mockClear();
+    vi.mocked(ontology.output).mockResolvedValue(SELECTION);
+    render(<OutputOntologyPage />);
+
+    await userEvent.click(await screen.findByRole("switch", { name: "Derive Business behaviour" }));
+
+    await waitFor(() => expect(configs.setEnabled).toHaveBeenCalledWith("derivation", "BusinessProcess", true));
+  });
+
+  it("takes no other switch while one is being written, so a slow answer loses no click", async () => {
+    vi.mocked(configs.setEnabled).mockClear();
+    vi.mocked(ontology.output).mockResolvedValue(SELECTION);
+    let release: (value: { name: string; enabled: boolean }) => void = () => {};
+    vi.mocked(configs.setEnabled).mockImplementation(() => new Promise((resolve) => (release = resolve)));
+    render(<OutputOntologyPage />);
+
+    await userEvent.click(await screen.findByRole("switch", { name: "Enable BusinessObject" }));
+    const other = screen.getByRole("switch", { name: "Derive the Business layer" });
+    expect(other).toHaveAttribute("aria-disabled", "true");
+    await userEvent.click(other);
+    expect(configs.setEnabled).toHaveBeenCalledTimes(1);
+
+    release({ name: "BusinessObject", enabled: false });
+    await waitFor(() => expect(screen.getByRole("switch", { name: "Derive the Business layer" })).toHaveAttribute("aria-disabled", "false"));
+    vi.mocked(configs.setEnabled).mockResolvedValue({ name: "x", enabled: true });
+  });
+
+  it("keeps keyboard focus on a switch through its change", async () => {
+    vi.mocked(configs.setEnabled).mockClear();
+    vi.mocked(ontology.output).mockResolvedValue(SELECTION);
+    vi.mocked(configs.setEnabled).mockResolvedValue({ name: "x", enabled: true });
+    render(<OutputOntologyPage />);
+
+    const toggle = await screen.findByRole("switch", { name: "Enable BusinessObject" });
+    toggle.focus();
+    await userEvent.keyboard(" ");
+    await waitFor(() => expect(configs.setEnabled).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(screen.getByRole("switch", { name: "Enable BusinessObject" })).toHaveAttribute("aria-disabled", "false"));
+
+    expect(document.activeElement).toBe(screen.getByRole("switch", { name: "Enable BusinessObject" }));
+    await userEvent.keyboard(" ");
+    await waitFor(() => expect(configs.setEnabled).toHaveBeenCalledTimes(2));
+  });
+
+  it("says when a switch was only partly saved", async () => {
+    vi.mocked(ontology.output).mockResolvedValue(SELECTION);
+    vi.mocked(configs.setEnabled).mockReset();
+    vi.mocked(configs.setEnabled).mockResolvedValueOnce({ name: "BusinessActor", enabled: false }).mockRejectedValueOnce(new Error("disk full"));
+    render(<OutputOntologyPage />);
+
+    await userEvent.click(await screen.findByRole("switch", { name: "Enable BusinessActor" }));
+
+    expect(await screen.findByText(/1 of 2 changes saved: disk full/)).toBeInTheDocument();
+    vi.mocked(configs.setEnabled).mockResolvedValue({ name: "x", enabled: true });
+  });
+
+  it("says when a selected type needs one that is off, and how much is selected", async () => {
+    vi.mocked(ontology.output).mockResolvedValue(SELECTION);
+    render(<OutputOntologyPage />);
+
+    expect(await screen.findByText(/needs ApplicationComponent, which is off/)).toBeInTheDocument();
+    expect(screen.getByText(/2 of 4 types selected/)).toBeInTheDocument();
   });
 
   it("shows relationship counts and the allowed relationships per pair", async () => {

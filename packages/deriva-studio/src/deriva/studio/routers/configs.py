@@ -7,6 +7,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
+from deriva.services import read_only_refusal
 from deriva.studio.deps import get_session
 
 router = APIRouter(prefix="/api/configs", tags=["configs"])
@@ -115,6 +116,9 @@ def dry_run(name: str, body: DryRun, session: Any = Depends(get_session)) -> dic
         query = row.get("input_graph_query")
     if not query:
         raise HTTPException(status_code=400, detail=f"{name} has no candidate query")
+    # A draft is user-typed: the query bar's check, refused before the session is asked
+    if (reason := read_only_refusal(query)) is not None:
+        raise HTTPException(status_code=400, detail=reason)
     try:
         return session.dry_run_graph_query(query)
     except Exception as exc:

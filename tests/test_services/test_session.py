@@ -78,6 +78,24 @@ class TestPipelineSessionLifecycle:
         assert use_database.call_args.args[0] == "darkgreen"
         assert session.repository == "darkgreen"
 
+    def test_a_switch_to_a_held_graph_keeps_the_repository(self):
+        """The graph database refused the switch (another process holds it): the session still reads its own."""
+        from deriva.services import GraphDatabaseBusy
+
+        with (
+            patch("deriva.services.session.get_connection"),
+            patch("deriva.services.session.GraphManager"),
+            patch("deriva.services.session.ArchimateManager"),
+            patch("deriva.services.session.RepoManager"),
+            patch("deriva.services.session.use_database"),
+        ):
+            session = PipelineSession(repository="repo-a")
+            session.connect()
+            with patch("deriva.services.session.use_database", side_effect=GraphDatabaseBusy("repo-b.grafeo")), pytest.raises(GraphDatabaseBusy):
+                session.use_repository("repo-b")
+
+        assert session.repository == "repo-a"
+
     def test_a_cancelled_run_makes_no_further_llm_call(self):
         from deriva.services.session import RunCancelled
 
@@ -155,6 +173,100 @@ class TestPipelineSessionLifecycle:
             mock_graph.return_value.disconnect.assert_called_once()
             mock_archimate.return_value.disconnect.assert_called_once()
 
+    def test_disconnect_closes_the_config_database_connection(self):
+        with (
+            patch("deriva.services.session.get_connection") as mock_db,
+            patch("deriva.services.session.GraphManager"),
+            patch("deriva.services.session.ArchimateManager"),
+            patch("deriva.services.session.RepoManager"),
+        ):
+            session = PipelineSession(auto_connect=True)
+            session.disconnect()
+
+        mock_db.return_value.close.assert_called_once()
+        assert session._engine is None
+
+    def test_a_connect_refused_by_a_held_graph_closes_what_it_opened(self):
+        """The graph file is held (GraphDatabaseBusy at the graph manager): the config connection and the graph close again."""
+        from deriva.services import GraphDatabaseBusy
+
+        with (
+            patch("deriva.services.session.get_connection") as mock_db,
+            patch("deriva.services.session.GraphManager") as mock_graph,
+            patch("deriva.services.session.ArchimateManager") as mock_archimate,
+            patch("deriva.services.session.RepoManager"),
+            patch("deriva.services.session.close_database") as close_database,
+        ):
+            mock_graph.return_value.connect.side_effect = GraphDatabaseBusy("repo-b.grafeo")
+            session = PipelineSession(repository="repo-b")
+            with pytest.raises(GraphDatabaseBusy):
+                session.connect()
+
+        mock_db.return_value.close.assert_called_once()
+        close_database.assert_called_once()
+        mock_archimate.assert_not_called()
+        assert not session.is_connected() and session._engine is None and session._graph_manager is None
+
+    def test_a_connect_refused_at_the_switch_closes_the_engine_and_leaves_the_graph(self):
+        """use_database refused (it went back to the database other connections use): that database stays open."""
+        from deriva.services import GraphDatabaseBusy
+
+        with (
+            patch("deriva.services.session.get_connection") as mock_db,
+            patch("deriva.services.session.GraphManager") as mock_graph,
+            patch("deriva.services.session.ArchimateManager"),
+            patch("deriva.services.session.RepoManager"),
+            patch("deriva.services.session.use_database", side_effect=GraphDatabaseBusy("repo-b.grafeo")),
+            patch("deriva.services.session.close_database") as close_database,
+        ):
+            session = PipelineSession(repository="repo-b")
+            with pytest.raises(GraphDatabaseBusy):
+                session.connect()
+
+        mock_db.return_value.close.assert_called_once()
+        close_database.assert_not_called()
+        mock_graph.assert_not_called()
+        assert not session.is_connected() and session._engine is None
+
+    def test_a_failed_migration_closes_the_engine(self):
+        with (
+            patch("deriva.services.session.get_connection") as mock_db,
+            patch("deriva.services.session.run_migrations", side_effect=RuntimeError("migration failed")),
+            patch("deriva.services.session.GraphManager") as mock_graph,
+        ):
+            session = PipelineSession()
+            with pytest.raises(RuntimeError, match="migration failed"):
+                session.connect()
+
+        mock_db.return_value.close.assert_called_once()
+        mock_graph.assert_not_called()
+        assert session._engine is None
+
+    def test_after_a_refused_connect_another_process_can_open_the_config_database(self, tmp_path):
+        """A real DuckDB file: the failed connect leaves no handle on it (another process opens it at once)."""
+        import subprocess
+        import sys
+
+        import duckdb
+
+        from deriva.services import GraphDatabaseBusy
+
+        path = tmp_path / "config.db"
+        duckdb.connect(str(path)).close()
+        with (
+            patch("deriva.services.session.get_connection", side_effect=lambda: duckdb.connect(str(path))),
+            patch("deriva.services.session.run_migrations"),
+            patch("deriva.services.session.GraphManager") as mock_graph,
+            patch("deriva.services.session.close_database"),
+        ):
+            mock_graph.return_value.connect.side_effect = GraphDatabaseBusy("repo-b.grafeo")
+            session = PipelineSession(repository="repo-b")
+            with pytest.raises(GraphDatabaseBusy):
+                session.connect()
+
+        other = subprocess.run([sys.executable, "-c", "import sys, duckdb; duckdb.connect(sys.argv[1]).close()", str(path)], capture_output=True, text=True, timeout=60)
+        assert other.returncode == 0, other.stderr
+
 
 class TestPipelineSessionEnsureConnected:
     """Tests for _ensure_connected behavior."""
@@ -205,13 +317,12 @@ class TestPipelineSessionQueries:
 
     def test_get_graph_stats(self, connected_session):
         """Should aggregate node counts by type."""
-        connected_session._mock_graph.get_nodes_by_type.side_effect = lambda t: [{"id": "1"}] if t == "Repository" else []
+        connected_session._mock_graph.query.return_value = [{"labels": ["Graph", "Repository"], "nodes": 1}, {"labels": ["Graph", "Role"], "nodes": 2}]
 
         stats = connected_session.get_graph_stats()
 
-        assert stats["total_nodes"] == 1
-        assert stats["by_type"]["Repository"] == 1
-        assert stats["by_type"]["File"] == 0
+        assert stats["total_nodes"] == 3
+        assert stats["by_type"] == {"Repository": 1, "Role": 2}
 
     def test_get_graph_nodes(self, connected_session):
         """Should return nodes of specific type."""
@@ -517,6 +628,21 @@ class TestPipelineSessionOrchestration:
         assert kwargs["llm_query_fn"] is None
         assert kwargs["derivation_phases"] == ["prep"]
 
+    def test_run_pipeline_without_a_model_runs_as_no_llm(self, connected_session):
+        """No model configured: the LLM steps are skipped, as with --no-llm (no stand-in that answers None)."""
+        from deriva.services import derivation
+
+        connected_session._mock_pipeline.run_full_pipeline.return_value = {"success": True, "stats": {}}
+        connected_session._mock_derivation.STRUCTURAL_PHASES = derivation.STRUCTURAL_PHASES
+        connected_session._llm_no_model = True
+
+        with patch.object(connected_session, "_get_llm_query_fn", return_value=None):
+            connected_session.run_pipeline()
+
+        kwargs = connected_session._mock_pipeline.run_full_pipeline.call_args.kwargs
+        assert kwargs["llm_query_fn"] is None
+        assert kwargs["derivation_phases"] == ["prep"]
+
 
 class TestPipelineSessionIterators:
     """Tests for PipelineSession iterator methods (progress bar support)."""
@@ -536,7 +662,7 @@ class TestPipelineSessionIterators:
             session = PipelineSession(auto_connect=True)
             session._mock_extraction = mock_extraction  # type: ignore[attr-defined]
             session._mock_derivation = mock_derivation  # type: ignore[attr-defined]
-            session._mock_config = mock_config  # type: ignore[attr-defined]
+            setattr(session, "_mock_config", mock_config)
             yield session
 
     def test_run_extraction_iter_yields_progress_updates(self, connected_session):
@@ -836,7 +962,7 @@ class TestPipelineSessionConfigMethods:
         ):
             session = PipelineSession(auto_connect=True)
             session._mock_engine = mock_db.return_value  # type: ignore[attr-defined]
-            session._mock_config = mock_config  # type: ignore[attr-defined]
+            setattr(session, "_mock_config", mock_config)
             yield session
 
     def test_later_steps_of_a_disabled_target_are_the_enabled_later_ones(self, connected_session):
@@ -1283,7 +1409,7 @@ class TestPipelineSessionCypherQueries:
         rows = connected_session.query_graph_read_only("MATCH (n) RETURN n.id AS id", {"x": 1})
 
         assert rows == [{"id": "d1"}]
-        connected_session._mock_graph.query_read_only.assert_called_once_with("MATCH (n) RETURN n.id AS id", {"x": 1})
+        connected_session._mock_graph.query_read_only.assert_called_once_with("MATCH (n) RETURN n.id AS id", {"x": 1}, None)
         connected_session._mock_graph.query.assert_not_called()
 
     def test_query_model_read_only_uses_the_rolled_back_path(self, connected_session):
@@ -1291,7 +1417,27 @@ class TestPipelineSessionCypherQueries:
 
         connected_session.query_model_read_only("MATCH (e) RETURN e")
 
-        connected_session._mock_archimate.query_read_only.assert_called_once_with("MATCH (e) RETURN e", None)
+        connected_session._mock_archimate.query_read_only.assert_called_once_with("MATCH (e) RETURN e", None, None)
+
+    def test_a_user_typed_query_that_writes_or_reads_files_is_refused_before_the_database(self, connected_session):
+        """The read-only path refuses what a rollback cannot make safe (schema statements, LOAD CSV, file-reading
+        procedures) for every caller, the studio's routes and anything else, before a manager is asked."""
+        from deriva.services import QueryRefused
+
+        refused = (
+            "CREATE CONSTRAINT FOR (n:Graph) REQUIRE n.id IS UNIQUE",
+            "LOAD CSV FROM 'file:///x' AS r RETURN r",
+            "CALL grafeo.load_nodes_csv({path: 'x'}) YIELD rows RETURN rows",
+        )
+        for query in refused:
+            with pytest.raises(QueryRefused):
+                connected_session.query_graph_read_only(query)
+            with pytest.raises(QueryRefused):
+                connected_session.query_model_read_only(query)
+            with pytest.raises(QueryRefused):
+                connected_session.dry_run_graph_query(query)
+        connected_session._mock_graph.query_read_only.assert_not_called()
+        connected_session._mock_archimate.query_read_only.assert_not_called()
 
     def test_query_graph_raises_when_not_connected(self):
         """Should raise RuntimeError when not connected."""
@@ -2037,8 +2183,8 @@ class TestOnlyStep:
         key = "node_type" if step_type == "extraction" else "element_type"
         getter = "get_extraction_configs" if step_type == "extraction" else "get_derivation_configs"
         setattr(session, getter, lambda enabled_only=False: [{key: n, "enabled": e} for n, e in states.items()])
-        session.enable_step = lambda t, n: states.__setitem__(n, True) or True  # type: ignore[method-assign]
-        session.disable_step = lambda t, n: states.__setitem__(n, False) or True  # type: ignore[method-assign]
+        setattr(session, "enable_step", lambda t, n: states.__setitem__(n, True) or True)
+        setattr(session, "disable_step", lambda t, n: states.__setitem__(n, False) or True)
         return session
 
     def test_enables_only_target_inside_block_and_restores_after(self):
@@ -2160,7 +2306,7 @@ class TestConfinedModelExport:
     def test_a_path_outside_the_output_folder_is_refused(self, tmp_path, monkeypatch):
         monkeypatch.setenv("DERIVA_HOME", str(tmp_path))
         session = PipelineSession()
-        session._ensure_connected = lambda: None  # type: ignore[method-assign]
+        setattr(session, "_ensure_connected", lambda: None)
         session._archimate_manager = MagicMock()
 
         with pytest.raises(ValueError, match="workspace"):
@@ -2171,7 +2317,7 @@ class TestConfinedModelExport:
     def test_a_relative_path_is_read_from_the_home_folder(self, tmp_path, monkeypatch):
         monkeypatch.setenv("DERIVA_HOME", str(tmp_path))
         session = PipelineSession()
-        session._ensure_connected = lambda: None  # type: ignore[method-assign]
+        setattr(session, "_ensure_connected", lambda: None)
         session._archimate_manager = MagicMock()
         session._archimate_manager.get_elements.return_value = []
 
@@ -2182,7 +2328,7 @@ class TestConfinedModelExport:
 
 def test_deleting_the_session_repository_leaves_it_for_the_default_graph():
     session = PipelineSession(repository="deriva")
-    session._ensure_connected = lambda: None  # type: ignore[method-assign]
+    setattr(session, "_ensure_connected", lambda: None)
     session._repo_manager = MagicMock()
 
     with patch("deriva.services.session.use_database") as use:

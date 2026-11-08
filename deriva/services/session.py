@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import json
 import logging
+import threading
 from collections.abc import Callable, Generator, Iterator
 from contextlib import contextmanager
 from datetime import datetime
@@ -37,9 +38,10 @@ from deriva.adapters.archimate import ArchimateManager
 from deriva.adapters.archimate.models import layer_of
 from deriva.adapters.archimate.xml_export import ArchiMateXMLExporter
 from deriva.adapters.database import get_connection, run_migrations
-from deriva.adapters.grafeo import DEFAULT_DATABASE, close_database, database_bytes, database_exists, delete_database, use_database
+from deriva.adapters.grafeo import DEFAULT_DATABASE, check_read_only, close_database, database_bytes, database_exists, delete_database, use_database
 from deriva.adapters.graph import GraphManager
 from deriva.adapters.repository import RepoManager
+from deriva.common.exceptions import NoModelConfigured, RunStopped
 from deriva.common.logging import RunLogger
 from deriva.common.paths import home, resolve, workspace
 from deriva.common.settings import RepositorySettings
@@ -69,8 +71,27 @@ class UnknownRepository(ValueError):
         super().__init__(f"Unknown repository: {name} (known: {', '.join(available) or 'none'})")
 
 
-class RunCancelled(RuntimeError):
+class RunCancelled(RunStopped):
     """The run was cancelled: the session makes no further LLM call until the cancel check is removed."""
+
+
+class LLMBudgetExceeded(RunStopped):
+    """The run made its max_llm_calls_per_run LLM calls: every further call of the run is refused."""
+
+
+class _CallBudget:
+    """The LLM calls a run has left; sampling takes from it on several threads."""
+
+    def __init__(self, limit: int) -> None:
+        self.limit = limit
+        self.calls = 0
+        self._lock = threading.Lock()
+
+    def take(self) -> None:
+        with self._lock:
+            if self.calls >= self.limit:
+                raise LLMBudgetExceeded(f"The run made its {self.limit} LLM calls (max_llm_calls_per_run): no further call; raise the setting for a larger repository")
+            self.calls += 1
 
 
 class PipelineSession:
@@ -83,6 +104,9 @@ class PipelineSession:
     - Infrastructure: graph database control, data clearing
     - Export: ArchiMate XML export
     """
+
+    _llm_no_model = False  # The LLM manager could not start because no model is configured (no error: a structural run)
+    _run_budget: _CallBudget | None = None  # The budget all query functions share (one_llm_budget)
 
     def __init__(
         self,
@@ -141,18 +165,26 @@ class PipelineSession:
 
         # Database (get_connection uses DB_PATH from env); bring older schemas up to date
         self._engine = get_connection()
-        run_migrations(self._engine)
+        switched = False
+        try:
+            run_migrations(self._engine)
 
-        # Graph managers (grafeo embedded), in the session's repository database
-        use_database(self.repository)
-        self._graph_manager = GraphManager()
-        self._graph_manager.connect()
+            # Graph managers (grafeo embedded), in the session's repository database
+            use_database(self.repository)
+            switched = True
+            self._graph_manager = GraphManager()
+            self._graph_manager.connect()
 
-        self._archimate_manager = ArchimateManager()
-        self._archimate_manager.connect()
+            self._archimate_manager = ArchimateManager()
+            self._archimate_manager.connect()
 
-        # Repository manager
-        self._repo_manager = RepoManager(workspace_dir=self._workspace_dir)
+            # Repository manager
+            self._repo_manager = RepoManager(workspace_dir=self._workspace_dir)
+        except BaseException:
+            # A failed connect (a held graph file, a failed migration) keeps nothing open; a refused switch went back to
+            # the database other connections use, so the graph closes only when the switch succeeded
+            self._release(close_graph=switched)
+            raise
 
         self._connected = True
 
@@ -176,9 +208,13 @@ class PipelineSession:
             raise UnknownRepository(repository, names)
 
     def use_repository(self, repository: str) -> None:
-        """Switch the graph and model managers to another repository's database."""
-        self.repository = repository
+        """Switch the graph and model managers to another repository's database.
+
+        Raises:
+            GraphDatabaseBusy: another process holds that repository's graph file; the session keeps its repository
+        """
         use_database(repository)
+        self.repository = repository
 
     @contextmanager
     def in_repository(self, repository: str) -> Generator[None]:
@@ -246,7 +282,7 @@ class PipelineSession:
         """What the workspace keeps on disk: graph databases (repository, shared, orphaned), LLM cache, exports, benchmark sessions."""
         return storage.overview(repositories=self._repository_names(), active=self.repository)
 
-    def clear_llm_cache(self) -> dict[str, int]:
+    def clear_llm_cache(self) -> dict[str, Any]:
         """Delete every cached LLM answer; the session's own cache closes first and reopens with the next call."""
         if self._llm_manager is not None:
             self._llm_manager.cache.close()
@@ -275,7 +311,10 @@ class PipelineSession:
         """Disconnect all managers."""
         if not self._connected:
             return
+        self._release(close_graph=True)
 
+    def _release(self, close_graph: bool) -> None:
+        """Disconnect the managers, close the config database connection and (``close_graph``) the shared grafeo database."""
         if self._graph_manager:
             self._graph_manager.disconnect()
             self._graph_manager = None
@@ -285,11 +324,17 @@ class PipelineSession:
             self._archimate_manager = None
 
         self._repo_manager = None
-        self._engine: Any | None = None
+        engine, self._engine = self._engine, None
         self._connected = False
+        if engine is not None:
+            try:
+                engine.close()
+            except Exception as exc:  # noqa: BLE001 - closing must not hide what ended the session
+                logger.debug("Closing the config database connection failed: %s", exc)
 
         # Release the shared grafeo database
-        close_database()
+        if close_graph:
+            close_database()
 
     def __enter__(self) -> PipelineSession:
         """Context manager entry."""
@@ -308,6 +353,19 @@ class PipelineSession:
     # LLM (Lazy loaded)
     # =========================================================================
 
+    def _new_llm_budget(self) -> _CallBudget:
+        limit = config.get_llm_call_budget(self._engine) if self._engine is not None else config.LIMIT_DEFAULTS[config.LLM_CALL_BUDGET_SETTING]
+        return _CallBudget(limit)
+
+    @contextmanager
+    def one_llm_budget(self) -> Generator[None]:
+        """Inside the block every query function draws from one budget: a run of several stages is one run."""
+        self._run_budget = self._new_llm_budget()
+        try:
+            yield
+        finally:
+            self._run_budget = None
+
     def _get_llm_query_fn(self, no_cache: bool = False) -> Callable[..., Any] | None:
         """Get LLM query function, lazy loading the manager."""
         if self._llm_manager is None:
@@ -316,14 +374,20 @@ class PipelineSession:
 
                 self._llm_manager = LLMManager()
                 self._llm_error = None
+                self._llm_no_model = False
             except Exception as e:
-                logger.warning("Failed to initialize LLM manager: %s", e)
+                # Once per reason: the CLI asks before a run and again in it
+                if str(e) != self._llm_error:
+                    logger.warning("Failed to initialize LLM manager: %s", e)
                 # Why, for the run that needed it (the manager's errors name variables, never values)
                 self._llm_error = str(e)
+                self._llm_no_model = isinstance(e, NoModelConfigured)
                 return None
 
         if no_cache:
             self._llm_manager.nocache = True
+        # Per run: each run asks for its own query function, or shares one budget (one_llm_budget)
+        budget = self._run_budget or self._new_llm_budget()
 
         def query_fn(
             prompt: str,
@@ -332,11 +396,13 @@ class PipelineSession:
             max_tokens: int | None = None,
             system_prompt: str | None = None,
             response_model: type | None = None,
+            sample: int | None = None,
         ) -> Any:
             assert self._llm_manager is not None
             # A cancelled run stops at its next call, also inside a long step
             if self._cancel_check is not None and self._cancel_check():
                 raise RunCancelled("run cancelled")
+            budget.take()
             try:
                 response = self._llm_manager.query(
                     prompt,
@@ -345,6 +411,7 @@ class PipelineSession:
                     temperature=temperature,
                     max_tokens=max_tokens,
                     system_prompt=system_prompt,
+                    sample=sample,
                 )
             except Exception as exc:
                 self._record_call(prompt, schema, system_prompt, None, str(exc))
@@ -388,6 +455,11 @@ class PipelineSession:
         return None
 
     @property
+    def llm_no_model(self) -> bool:
+        """True when the LLM did not start because no model is configured (a valid setup: the structural steps run)."""
+        return self._llm_no_model
+
+    @property
     def llm_error(self) -> str | None:
         """Why the LLM could not start (a missing key variable, the .env read), or None; names variables, never values."""
         return self._llm_error
@@ -417,20 +489,15 @@ class PipelineSession:
         self._ensure_connected()
         assert self._graph_manager is not None
 
-        node_types = ["Repository", "Directory", "File", "BusinessConcept", "Technology", "TypeDefinition", "Method", "Test", "ExternalDependency"]
-
-        stats: dict[str, Any] = {"total_nodes": 0, "by_type": {}}
+        # Every node type the graph holds; counted, so a large graph is not read into memory for a summary
         by_type: dict[str, int] = {}
         total = 0
-        for node_type in node_types:
-            nodes = self._graph_manager.get_nodes_by_type(node_type)
-            count = len(nodes)
-            by_type[node_type] = count
-            total += count
-
-        stats["by_type"] = by_type
-        stats["total_nodes"] = total
-        return stats
+        for row in self._graph_manager.query("MATCH (n:Graph) RETURN labels(n) AS labels, count(n) AS nodes"):
+            total += row["nodes"]
+            for label in row["labels"]:
+                if label != "Graph":
+                    by_type[label.removeprefix("Graph:")] = by_type.get(label.removeprefix("Graph:"), 0) + row["nodes"]
+        return {"total_nodes": total, "by_type": by_type}
 
     def get_graph_nodes(self, node_type: str, limit: int | None = None) -> list[dict]:
         """Get nodes of a specific type (the first ``limit`` by id when given)."""
@@ -507,29 +574,40 @@ class PipelineSession:
         relationships = [r for r in self._archimate_manager.get_relationships() if r.source in enabled_ids and r.target in enabled_ids]
         return export_levels.leveled_model(elements, relationships, export_levels.detail_lineage(self._graph_manager))
 
-    def query_graph(self, cypher: str) -> list[dict]:
-        """Run arbitrary Cypher query on Graph namespace."""
+    def query_graph(self, query: str) -> list[dict]:
+        """Run an arbitrary query (GRAFEO_QUERY_LANGUAGE, GQL by default) on the Graph namespace."""
         self._ensure_connected()
         assert self._graph_manager is not None
-        return self._graph_manager.query(cypher)
+        return self._graph_manager.query(query)
 
-    def query_model(self, cypher: str) -> list[dict]:
-        """Run arbitrary Cypher query on Model namespace."""
+    def query_model(self, query: str) -> list[dict]:
+        """Run an arbitrary query (GRAFEO_QUERY_LANGUAGE, GQL by default) on the Model namespace."""
         self._ensure_connected()
         assert self._archimate_manager is not None
-        return self._archimate_manager.query(cypher)
+        return self._archimate_manager.query(query)
 
-    def query_graph_read_only(self, cypher: str, params: dict[str, Any] | None = None) -> list[dict]:
-        """Run a user-typed Cypher query on the Graph namespace; writes are rolled back."""
+    def query_graph_read_only(self, query: str, params: dict[str, Any] | None = None, language: str | None = None) -> list[dict]:
+        """Run a user-typed query on the Graph namespace, in ``language`` or the configured one; writes are rolled back.
+
+        Raises:
+            QueryRefused: a query a rollback cannot make safe (a schema or LOAD clause, a procedure that is not
+                read-only), before the database is asked
+        """
+        check_read_only(query)
         self._ensure_connected()
         assert self._graph_manager is not None
-        return self._graph_manager.query_read_only(cypher, params)
+        return self._graph_manager.query_read_only(query, params, language)
 
-    def query_model_read_only(self, cypher: str, params: dict[str, Any] | None = None) -> list[dict]:
-        """Run a user-typed Cypher query on the Model namespace; writes are rolled back."""
+    def query_model_read_only(self, query: str, params: dict[str, Any] | None = None, language: str | None = None) -> list[dict]:
+        """Run a user-typed query on the Model namespace, in ``language`` or the configured one; writes are rolled back.
+
+        Raises:
+            QueryRefused: as ``query_graph_read_only``
+        """
+        check_read_only(query)
         self._ensure_connected()
         assert self._archimate_manager is not None
-        return self._archimate_manager.query_read_only(cypher, params)
+        return self._archimate_manager.query_read_only(query, params, language)
 
     def trace_element(self, element_id: str, calls: list[dict[str, Any]] | None = None) -> dict[str, Any] | None:
         """Where a model element comes from: sources, relationships and the given run calls that mention its sources."""
@@ -874,11 +952,11 @@ class PipelineSession:
 
         llm_query_fn = self._get_llm_query_fn()
         if llm_query_fn is None:
-
-            def noop_llm(prompt: str, schema: dict) -> None:
-                return None
-
-            llm_query_fn = noop_llm
+            if not self._llm_no_model:
+                # A model is configured and cannot start (a missing key): the run needs it, so it says so
+                return {"success": False, "errors": [f"LLM not available: {self._llm_error}"], "results": {}}
+            # No model configured: the run is a --no-llm run (the CLI says the LLM steps are skipped)
+            return self.run_pipeline(repo_name=repo_name, verbose=verbose, progress=progress, no_llm=True)
 
         return pipeline.run_full_pipeline(
             engine=self._engine,
@@ -1039,11 +1117,14 @@ class PipelineSession:
         name: str | None = None,
         branch: str | None = None,
         overwrite: bool = False,
+        submodules: bool = True,
+        allow_local: bool = False,
     ) -> dict[str, Any]:
-        """Clone a repository (no database is needed, so a session that is not connected clones too)."""
+        """Clone a repository (no database is needed, so a session that is not connected clones too); ``allow_local``
+        accepts a ``file://`` URL, which only the command line passes."""
         repos = self._repo_manager or RepoManager(workspace_dir=self._workspace_dir)
         try:
-            result = repos.clone_repository(repo_url=url, target_name=name, branch=branch, overwrite=overwrite)
+            result = repos.clone_repository(repo_url=url, target_name=name, branch=branch, overwrite=overwrite, submodules=submodules, allow_local=allow_local)
             return {
                 "success": True,
                 "name": result.name,
@@ -1289,11 +1370,11 @@ class PipelineSession:
         assert self._engine is not None
         return config.add_extraction_step(self._engine, node_type, sequence, extraction_method=extraction_method, params=params)
 
-    def add_derivation_step(self, step_name: str, phase: str, sequence: int, params: str | None = None) -> bool:
-        """Add a new derivation step (disabled, version 1)."""
+    def add_derivation_step(self, step_name: str, phase: str, sequence: int, params: str | None = None, llm: bool = False) -> bool:
+        """Add a new derivation step (disabled, version 1); ``llm`` hands it the LLM."""
         self._ensure_connected()
         assert self._engine is not None
-        return config.add_derivation_step(self._engine, step_name, phase, sequence, params=params)
+        return config.add_derivation_step(self._engine, step_name, phase, sequence, params=params, llm=llm)
 
     def save_derivation_config(
         self,
@@ -1366,6 +1447,12 @@ class PipelineSession:
         self._ensure_connected()
         assert self._engine is not None
         config.set_setting(self._engine, key, value)
+
+    def delete_setting(self, key: str) -> bool:
+        """Unset a system setting (its default applies again); False when it was not set."""
+        self._ensure_connected()
+        assert self._engine is not None
+        return config.delete_setting(self._engine, key)
 
     def add_file_type(self, extension: str, file_type: str, subtype: str) -> bool:
         """Add a file type to the registry."""

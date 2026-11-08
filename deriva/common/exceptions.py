@@ -52,6 +52,16 @@ class ConfigurationError(BaseError):
     """Raised when configuration is invalid or missing."""
 
 
+class NoModelConfigured(ConfigurationError):
+    """No LLM model is configured at all, which is a valid setup: only the structural steps run."""
+
+
+class RunStopped(RuntimeError):
+    """The run must stop (cancelled, out of budget). Every further LLM call of the run raises it, so none reaches the
+    model. sample_llm passes it on instead of counting a failed sample; a step that catches every exception records
+    the refused calls as errors and goes on, and the studio stops a cancelled run before its next step."""
+
+
 # =============================================================================
 # API and External Service Errors
 # =============================================================================
@@ -150,6 +160,9 @@ __all__ = [
     "BaseError",
     # Configuration
     "ConfigurationError",
+    "NoModelConfigured",
+    # Run
+    "RunStopped",
     # API/External
     "APIError",
     "ProviderError",

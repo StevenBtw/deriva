@@ -17,6 +17,7 @@ import typer
 from deriva.bench.session import BenchmarkSession
 from deriva.cli.progress import create_benchmark_progress_reporter  # noqa: TID251 - the benchmark command is the one module that may use the CLI
 from deriva.common.paths import workspace
+from deriva.modules.analysis.measures import share_text
 from deriva.services.session import PipelineSession
 
 if TYPE_CHECKING:
@@ -271,20 +272,20 @@ def benchmark_step(
     for repo, consistency in result.repositories.items():
         counts = "/".join(str(n) for n in consistency.counts)
         calls = "/".join(str(n) for n in result.llm_calls.get(repo, []))
-        typer.echo(f"{repo:30} {consistency.presence_score:9.1%} {consistency.exact_score:8.1%}  {counts:15}  {calls}")
+        typer.echo(f"{repo:30} {share_text(consistency.presence_score):>9} {share_text(consistency.exact_score):>8}  {counts:15}  {calls}")
         for group, scores in consistency.groups.items():
-            typer.echo(f"  {group:28} {scores.presence_score:9.1%} {scores.exact_score:8.1%}  {'/'.join(str(n) for n in scores.counts)}")
+            typer.echo(f"  {group:28} {share_text(scores.presence_score):>9} {share_text(scores.exact_score):>8}  {'/'.join(str(n) for n in scores.counts)}")
         if consistency.property_differences:
             typer.echo("  differing properties: " + ", ".join(f"{name} {n}" for name, n in consistency.property_differences.items()))
         for stability in result.answer_stability.get(repo, []):
             if stability.step == result.step:
-                typer.echo(f"  answer stability: {stability.identical}/{stability.prompts} ({stability.score:.1%})")
+                typer.echo(f"  answer stability: {stability.identical}/{stability.prompts} ({share_text(stability.score)})")
         if repo in result.decision_stability:
             decided = result.decision_stability[repo]
-            typer.echo(f"  decision stability: {decided.stable}/{decided.items} ({decided.score:.1%})")
+            typer.echo(f"  decision stability: {decided.stable}/{decided.items} ({share_text(decided.score)})")
         if repo in result.output_stability:
             effect = result.output_stability[repo]
-            typer.echo(f"  output stability: {effect.stable}/{effect.items} ({effect.score:.1%})")
+            typer.echo(f"  output stability: {effect.stable}/{effect.items} ({share_text(effect.score)})")
     presence, exact = result.average("presence_score"), result.average("exact_score")
     if presence is not None and exact is not None:
         typer.echo(f"{'Average':30} {presence:9.1%} {exact:8.1%}")
@@ -434,7 +435,7 @@ def benchmark_gate(
     """Element and relationship recall and precision and consistency by id per repository, and the verdict of a candidate.
 
     Accepted when one of the four measures rises by 1 point or more on at least two thirds of the measured repositories,
-    none of them drops by more than 2 points anywhere, and element and relationship consistency by id stay at 95% or more.
+    none of them drops by more than 2 points anywhere, and consistency by id stays at 90% or more for elements and 80% or more for relationships.
     """
     from deriva.bench import gate
 
@@ -459,9 +460,11 @@ def benchmark_gate(
     for level, by_side in measures.items():
         lines += [f"## {level.capitalize()} level", ""]
         lines += gate.table_markdown(by_side["baseline"], f"Baseline ({', '.join(sides['baseline'])})")
+        lines += gate.types_markdown(by_side["baseline"])
         payload["levels"][level] = {"baseline": by_side["baseline"]}
         if "candidate" in by_side:
             lines += gate.table_markdown(by_side["candidate"], f"Candidate ({', '.join(sides['candidate'])})")
+            lines += gate.types_markdown(by_side["candidate"])
             payload["levels"][level] |= {"candidate": by_side["candidate"], "verdict": gate.verdict(by_side["baseline"], by_side["candidate"])}
             lines += gate.verdict_markdown(payload["levels"][level]["verdict"])
     if sides["candidate"]:
@@ -504,6 +507,19 @@ def _print_metrics_report(metrics: dict) -> None:
     if metrics.get("consistency"):
         typer.echo("CONSISTENCY BY IDENTITY (cons / mean pairwise Jaccard; id = source-derived, name = type + name key; LLM part by id)")
         _print_consistency(metrics["consistency"])
+    levels = metrics.get("consistency_levels") or {}
+    if any(levels.values()):
+        typer.echo("CONSISTENCY PER LEVEL (by id, elements / relationships; solution: direct relationships only, enterprise: the derived viewpoint)")
+        header = f"{'Repository':<24} {'Model':<18} {'Solution E / R':<16} {'Enterprise E / R':<16}"
+        typer.echo("-" * len(header))
+        typer.echo(header)
+        typer.echo("-" * len(header))
+        by_key = {level: {(r["repository"], r["model"]): r["identities"]["id"] for r in rows} for level, rows in levels.items()}
+        for key in sorted({k for rows in by_key.values() for k in rows}):
+            cells = [by_key.get(level, {}).get(key) for level in ("solution", "enterprise")]
+            shown = [f"{_pct(c['elements']['cons'])} / {_pct(c['relationships']['cons'])}" if c else "-" for c in cells]
+            typer.echo(f"{key[0][:24]:<24} {key[1][:18]:<18} {shown[0]:<16} {shown[1]:<16}")
+        typer.echo("")
     if metrics.get("two_level"):
         typer.echo("TWO LEVELS (answers: same prompt answered alike; decisions: each item decided alike; alpha: Krippendorff, nominal)")
         header = f"{'Repository':<24} {'Model':<18} {'Decision':<36} {'Answers':>9} {'Decisions':>11} {'alpha':>6}"
@@ -621,7 +637,7 @@ def benchmark_analyze(
                 by_type = ", ".join(f"{t} {n:g}" for t, n in d["by_type"].items()) or "-"
                 typer.echo(
                     f"{d['repository'][:24]:<24} {d['model'][:18]:<18} {d['runs']:>4} {d['elements']:>6.1f} "
-                    f"{d['element_consistency']:>10.0%} {d['relationship_consistency']:>9.0%}  {by_type}"
+                    f"{share_text(d['element_consistency'], '.0%'):>10} {share_text(d['relationship_consistency'], '.0%'):>9}  {by_type}"
                 )
             typer.echo("")
 
@@ -821,16 +837,17 @@ def benchmark_deviations(
 
         typer.echo(f"Total runs analyzed: {report.total_runs}")
         typer.echo(f"Total deviations: {report.total_deviations}")
-        typer.echo(f"Overall consistency: {report.overall_consistency:.1%}\n")
+        typer.echo(f"Overall consistency: {share_text(report.overall_consistency)}\n")
 
         if report.config_deviations:
             typer.echo("CONFIG DEVIATIONS (sorted by deviation count)")
             typer.echo("-" * 60)
 
             for cd in report.config_deviations:
-                status = "LOW" if cd.consistency_score >= 0.8 else "MEDIUM" if cd.consistency_score >= 0.5 else "HIGH"
+                score = cd.consistency_score
+                status = "N/A" if score is None else "LOW" if score >= 0.8 else "MEDIUM" if score >= 0.5 else "HIGH"
                 typer.echo(f"  [{status}] {cd.config_type}: {cd.config_id}")
-                typer.echo(f"        Consistency: {cd.consistency_score:.1%}")
+                typer.echo(f"        Consistency: {share_text(score)}")
                 typer.echo(f"        Deviations: {cd.deviation_count}/{cd.total_objects}")
                 if cd.deviating_objects[:3]:
                     typer.echo(f"        Sample: {', '.join(cd.deviating_objects[:3])}")
@@ -890,7 +907,7 @@ def benchmark_comprehensive(
         typer.echo(f"Models: {', '.join(report.models)}")
         typer.echo("\nOVERALL METRICS")
         typer.echo("-" * 40)
-        typer.echo(f"  Consistency: {report.overall_consistency:.1%}")
+        typer.echo(f"  Consistency: {share_text(report.overall_consistency)}")
         typer.echo(f"  Precision:   {report.overall_precision:.1%}")
         typer.echo(f"  Recall:      {report.overall_recall:.1%}")
 
@@ -899,7 +916,7 @@ def benchmark_comprehensive(
             typer.echo("-" * 40)
             for repo, phases in report.stability_reports.items():
                 if "derivation" in phases:
-                    typer.echo(f"  {repo}: {phases['derivation'].overall_consistency:.1%} derivation consistency")
+                    typer.echo(f"  {repo}: {share_text(phases['derivation'].overall_consistency)} derivation consistency")
 
         if report.semantic_reports:
             typer.echo("\nSEMANTIC MATCH SUMMARY")

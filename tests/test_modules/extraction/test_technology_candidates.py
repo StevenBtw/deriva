@@ -6,6 +6,7 @@ import json
 
 import pytest
 
+from deriva.common.naming import name_key
 from deriva.modules.extraction import technology_candidates as tc
 from deriva.modules.extraction.base import generate_file_node_id
 
@@ -139,6 +140,19 @@ def _package(*names):
 
 
 class TestCollect:
+    def test_a_library_only_the_source_imports_is_an_item_with_the_files_that_import_it(self):
+        collected = tc.collect([], PLATFORMS, imported={"alpha_client": {"r/a.py", "r/b.py"}})
+
+        assert list(collected.items) == ["imported library::alpha_client"]
+        assert collected.items["imported library::alpha_client"].kind == "imported library"
+        assert collected.declared["imported library::alpha_client"] == {"r/a.py", "r/b.py"}
+
+    def test_a_declared_library_is_not_asked_again_as_an_import(self):
+        collected = tc.collect([_file("r/package.json", _package("alpha-client"))], PLATFORMS, imported={"alpha-client": {"r/a.js"}, "beta_client": {"r/b.js"}})
+
+        assert sorted(collected.items) == ["imported library::beta_client", "npm library::alpha-client"]
+        assert collected.declared["npm library::alpha-client"] == {"r/a.js", "r/package.json"}
+
     def test_an_item_is_collected_once_with_every_file_that_declares_it(self):
         collected = tc.collect([_file("a/package.json", _package("alpha-client")), _file("b/package.json", _package("alpha-client"))], PLATFORMS)
 
@@ -173,6 +187,23 @@ class TestCollect:
         collected = tc.collect([_file("deploy/docker-compose.yml", compose, "infra", "docker-compose")], [], own_units=own)
 
         assert sorted(collected.items) == ["compose service::store"]
+
+    def test_a_deployment_image_named_like_an_own_module_is_no_item_and_a_base_image_stays(self):
+        """A manifest that deploys an own module's image (by its name, with or without registry, tag or digest) runs the
+        repository's own software; a container file's base image in a folder of that name is still a technology."""
+        manifest = """spec:
+  containers:
+    - image: ledgerservice@sha256:0f3c2a9d8e7b6a5c4d3e2f1a0b9c8d7e6f5a4b3c2d1e0f9a8b7c6d5e4f3a2b1c
+    - image: registry.local:5000/team/billing-service:1.4
+    - image: redis:7
+"""
+        files = [_file("deploy/app.yaml", manifest, "infra", "kubernetes"), _file("redis/Dockerfile", "FROM redis:7-alpine\n", "infra", "docker")]
+        own = frozenset(name_key(n) for n in ("ledgerservice", "billing-service", "redis"))
+
+        collected = tc.collect(files, [], own_units=own)
+
+        # The three deployed images are own builds; the base image of the folder's container file stays
+        assert sorted(collected.items) == ["container image::redis:7-alpine"]
 
     def test_items_named_after_the_repository_are_no_items(self):
         manifest = """spec:
@@ -267,6 +298,26 @@ class TestPromptAndLabels:
             tc.parse_labels(json.dumps({"items": [{"item": "alpha-client", "category": "framework", "system": ""}]}), self.BATCH)
 
 
+def test_image_labels_name_each_labelled_image_by_its_system_and_none_by_nothing():
+    """A container image (Dockerfile, Kubernetes) and a compose service's image map to the system their label names,
+    without registry, tag or digest; an image labelled none maps to ""; the first label in key order wins."""
+    files = [
+        _file("shop/Dockerfile", "FROM registry.local:5000/acme/base-runner:2 AS build\nFROM alpine:3.20\n", "infra", "docker"),
+        _file("deploy/app.yaml", "spec:\n  containers:\n    - image: acme/kv@sha256:abc\n", "infra", "kubernetes"),
+        _file("docker-compose.yml", "services:\n  board:\n    image: acme/board\n    environment:\n      MODE: x\n", "infra", "docker-compose"),
+    ]
+    collected = tc.collect(files, [])
+    by_text = {item.text: key for key, item in collected.items.items()}
+    labels = {
+        by_text["registry.local:5000/acme/base-runner:2"]: {"category": "runtime", "system": "Base Runner"},
+        by_text["alpine:3.20"]: {"category": "none", "system": ""},
+        by_text["acme/kv@sha256:abc"]: {"category": "system_software", "system": "Key Value Store"},
+        by_text["board"]: {"category": "service", "system": "Board"},
+    }
+
+    assert tc.image_labels(labels, collected) == {"acme/base-runner": "Base Runner", "alpine": "", "acme/kv": "Key Value Store", "acme/board": "Board"}
+
+
 class TestNodesAndEdges:
     FILES = [_file("a/package.json", _package("alpha-client", "gamma")), _file("b/package.json", _package("beta-client"))]
     LABELS = {
@@ -313,3 +364,39 @@ class TestNodesAndEdges:
 
         assert "tech::r::storealpha" not in {n["node_id"] for n in nodes}
         assert {e["to_node_id"] for e in edges if e["properties"]["route"] == "llm"} == {"tech::r::store_alpha"}
+
+
+class TestImportsJoinLibraries:
+    def test_an_import_joins_a_library_spelled_with_a_hyphen(self):
+        collected = tc.collect([_file("r/package.json", _package("alpha-client"))], PLATFORMS, imported={"alpha_client": {"r/a.py"}})
+
+        assert list(collected.items) == ["npm library::alpha-client"]
+        assert collected.declared["npm library::alpha-client"] == {"r/a.py", "r/package.json"}
+
+    def test_an_import_named_like_an_image_or_a_variable_stays_an_import(self):
+        compose = "services:\n  cache:\n    image: alpha\n"
+        files = [_file("docker-compose.yml", compose, "infra", "docker-compose"), _file(".env", "ALPHA=1\n", "config", "env")]
+        collected = tc.collect(files, [], imported={"alpha": {"r/a.py"}})
+
+        assert "imported library::alpha" in collected.items
+        assert collected.declared["imported library::alpha"] == {"r/a.py"}
+
+
+def test_an_image_label_without_a_system_is_no_label_and_the_first_label_in_key_order_wins():
+    """A label with a category but no system names nothing: the image keeps its own name (fallback software) instead of
+    being dropped as none. Two labelled items that name the same image: the first key decides."""
+    files = [
+        _file("a/Dockerfile", "FROM acme/kv:1\n", "infra", "docker"),
+        _file("b/Dockerfile", "FROM acme/kv:2\n", "infra", "docker"),
+        _file("c/Dockerfile", "FROM acme/cache:1\n", "infra", "docker"),
+    ]
+    collected = tc.collect(files, [])
+    by_text = {item.text: key for key, item in collected.items.items()}
+    first, second = sorted([by_text["acme/kv:1"], by_text["acme/kv:2"]])
+    labels = {
+        first: {"category": "system_software", "system": "Key Value Store"},
+        second: {"category": "system_software", "system": "Other Store"},
+        by_text["acme/cache:1"]: {"category": "system_software", "system": ""},
+    }
+
+    assert tc.image_labels(labels, collected) == {"acme/kv": "Key Value Store"}

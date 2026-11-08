@@ -126,7 +126,7 @@ export function ModelPanel({ dark, refresh, onSelect }: { dark: boolean; refresh
             type="button"
             className={`pill ${quality.verdict === "ok" ? "ok" : "warn"}`}
             aria-expanded={qualityOpen}
-            title={quality.reasons.join("; ") || "No orphans, behaviour as well as structure, both layers, evidence behind every element"}
+            title={quality.reasons.join("; ") || "Few orphans, behaviour as well as structure, both layers, evidence behind the elements"}
             onClick={() => setQualityOpen((open) => !open)}
           >
             {`Quality: ${quality.verdict}`}

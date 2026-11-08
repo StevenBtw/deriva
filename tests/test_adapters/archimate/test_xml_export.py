@@ -67,7 +67,9 @@ class TestArchiMateXMLExporter:
             path = Path(tmpdir) / "model.xml"
             exporter.export([sample_element], [], str(path))
             root = etree.parse(str(path)).getroot()
-        pairs = root.get("{http://www.w3.org/2001/XMLSchema-instance}schemaLocation").split()
+        location = root.get("{http://www.w3.org/2001/XMLSchema-instance}schemaLocation")
+        assert location is not None
+        pairs = location.split()
 
         assert dict(zip(pairs[::2], pairs[1::2], strict=True)) == {
             "http://www.opengroup.org/xsd/archimate/3.0/": "http://www.opengroup.org/xsd/archimate/3.1/archimate3_Diagram.xsd",

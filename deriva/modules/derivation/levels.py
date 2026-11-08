@@ -195,7 +195,7 @@ def enterprise_derivations(
         levels: Element -> its levels
         types: Element -> its element type
         patterns: The viewpoint's (source type, relationship type, target type) triples
-        rules: The metamodel's valid derivation rules as data (``derivation_rules.rules_from``)
+        rules: The derivation rules the viewpoint may use, as data (``derivation_rules.rules_from``)
         strength: The structural relationship types, weakest first
         tier: (source type, relationship type, target type) -> "direct", "derived" or None (not allowed)
     """

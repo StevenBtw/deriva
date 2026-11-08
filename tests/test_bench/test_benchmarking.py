@@ -669,9 +669,9 @@ class TestElementStructuralStability:
         assert len(elem.connections) == 2
 
     def test_structural_score_empty_connections(self):
-        """Should return 100 when no connections."""
+        """No connections is nothing to compare: no score."""
         elem = ElementStructuralStability(element_id="A")
-        assert elem.structural_score == 100.0
+        assert elem.structural_score is None  # No connections: nothing to compare
 
     def test_structural_score_calculation(self):
         """Should calculate average of connection stability scores."""
@@ -1563,30 +1563,30 @@ class TestBenchmarkAnalyzer:
             with patch("deriva.bench.benchmarking.get_benchmark_runs", return_value=[]):
                 analyzer = BenchmarkAnalyzer("sess-1", engine)
 
-                # Elements in each run (no underscores - format is Type_Source_Target)
+                # Element identifiers hold underscores (ac_web): the relationship ids keep their ends apart
                 elements_by_run = {
-                    "run1": {"elemA", "elemB", "elemC"},
-                    "run2": {"elemA", "elemB", "elemC"},
-                    "run3": {"elemA", "elemB"},  # elemC missing in run 3
+                    "run1": {"ac_web", "ac_api", "as_order_api"},
+                    "run2": {"ac_web", "ac_api", "as_order_api"},
+                    "run3": {"ac_web", "ac_api"},  # the service missing in run 3
                 }
 
-                # Relationships: format is {Type}_{Source}_{Target}
+                # Relationships: format is {Type}|{Source}|{Target} (create_edge_id)
                 relationships_by_run = {
-                    "run1": {"Serving_elemA_elemB", "Flow_elemB_elemC"},
-                    "run2": {"Serving_elemA_elemB", "Flow_elemB_elemC"},
-                    "run3": {"Serving_elemA_elemB"},  # Flow missing
+                    "run1": {"Serving|ac_web|ac_api", "Flow|ac_api|as_order_api"},
+                    "run2": {"Serving|ac_web|ac_api", "Flow|ac_api|as_order_api"},
+                    "run3": {"Serving|ac_web|ac_api"},  # Flow missing
                 }
 
                 result = analyzer._compute_structural_stability(elements_by_run, relationships_by_run, 3)
 
-                # Per element its outbound connections: elemA serves elemB in all 3 runs, elemB's flow to elemC in 2
+                # Per element its outbound connections: the web component serves the API in all 3 runs, its flow in 2
                 outbound = {
                     (s.element_id, c.connected_to, c.relationship_type, c.appearances, c.total_runs)
                     for s in result
                     for c in s.connections
                     if c.relationship_type.endswith("_outbound")
                 }
-                assert outbound == {("elemA", "elemB", "Serving_outbound", 3, 3), ("elemB", "elemC", "Flow_outbound", 2, 3)}
+                assert outbound == {("ac_web", "ac_api", "Serving_outbound", 3, 3), ("ac_api", "as_order_api", "Flow_outbound", 2, 3)}
 
     def test_compute_structural_stability_empty(self):
         """Should return empty list when no relationships."""
@@ -2035,7 +2035,7 @@ class TestLLMQueryEvent:
         a = event.attributes
         assert (a["cache_key"], a["latency_ms"], a["wait_ms"], a["requests"]) == ("k1", 812.5, 40.0, 2)
         assert (a["tokens_in"], a["tokens_out"], a["cache_hit"], a["error_type"]) == (100, 20, False, None)
-        assert query_fn.used_cache_keys == ["k1"]
+        assert getattr(query_fn, "used_cache_keys") == ["k1"]
 
     def test_event_records_the_call_kind_from_the_schema_name(self):
         """keep / naming / relationship / extraction calls are told apart by their schema."""
@@ -2210,7 +2210,7 @@ class TestDatabasePerRepo:
         )
         calls: list[tuple[str, ...]] = []
         orchestrator._ensure_extraction = MagicMock(  # type: ignore[method-assign]
-            side_effect=lambda verbose=False, repositories=None: calls.append(("extract", *repositories)) or []
+            side_effect=lambda verbose=False, repositories=(): calls.append(("extract", *repositories)) or []
         )
         orchestrator._run_combined = MagicMock(  # type: ignore[method-assign]
             side_effect=lambda repositories, **kw: (
@@ -2365,6 +2365,7 @@ class TestRunModelSnapshot:
         with patch("deriva.bench.benchmarking.ArchiMateXMLExporter"):
             xml_path = orchestrator._export_run_model("r", "m", 1, solve_report={})
 
+        assert xml_path is not None
         snapshot = json.loads(Path(xml_path).with_suffix(".json").read_text(encoding="utf-8"))
         assert [e["levels"] for e in snapshot["elements"]] == [["enterprise"], ["solution"]]
         assert (snapshot["relationships"][0]["levels"], snapshot["relationships"][0]["cross_level"]) == ([], True)
@@ -2403,6 +2404,7 @@ class TestRunModelSnapshot:
         with patch("deriva.bench.benchmarking.ArchiMateXMLExporter"):
             xml_path = orchestrator._export_run_model("r", "m", 1, solve_report={})
 
+        assert xml_path is not None
         elements = {e["identifier"]: e for e in json.loads(Path(xml_path).with_suffix(".json").read_text(encoding="utf-8"))["elements"]}
         assert (elements["as_card"]["name_candidates"], elements["as_card"]["name_choice"]) == (["Card Processing", "Card Management"], True)
         assert (elements["ac_shop"]["name_candidates"], elements["ac_shop"]["name_choice"]) == (["Shop", "Shop App"], False)  # recorded: no call
@@ -2437,6 +2439,7 @@ class TestRunModelSnapshot:
 
         from pathlib import Path
 
+        assert xml_path is not None
         snapshot = json.loads(Path(xml_path).with_suffix(".json").read_text(encoding="utf-8"))
         assert snapshot["solve"] == solve  # the MILP's report for this run (a safety net: what it decided)
         assert snapshot["elements"] == [
@@ -2585,6 +2588,7 @@ class TestRunSnapshotCandidates:
         with patch("deriva.bench.benchmarking.ArchiMateXMLExporter"):
             xml_path = orchestrator._export_run_model("r", "m", 1, candidate_decisions=decisions)
 
+        assert xml_path is not None
         snapshot = json.loads(Path(xml_path).with_suffix(".json").read_text(encoding="utf-8"))
         assert snapshot["candidates"] == [
             {"type": "ApplicationComponent", "source": "dir::r::a", "stage": "created"},
@@ -2619,6 +2623,7 @@ class TestRunSnapshotCandidates:
         with patch("deriva.bench.benchmarking.ArchiMateXMLExporter"):
             xml_path = orchestrator._export_run_model("r", "m", 1, candidate_decisions=decisions)
 
+        assert xml_path is not None
         snapshot = json.loads(Path(xml_path).with_suffix(".json").read_text(encoding="utf-8"))
         assert snapshot["disabled"] == [{"identifier": "bo_b", "type": "BusinessObject", "name": "B", "source": "concept::r::b", "reason": "no_cross_layer_anchor"}]
         assert snapshot["candidates"] == [
@@ -2686,6 +2691,7 @@ class TestRunSnapshotGraphNodes:
         with patch("deriva.bench.benchmarking.ArchiMateXMLExporter"):
             xml_path = orchestrator._export_run_model("r", "m", 1)
 
+        assert xml_path is not None
         snapshot = json.loads(Path(xml_path).with_suffix(".json").read_text(encoding="utf-8"))
         assert snapshot["graph"] == {
             "concepts": [["concept::r::alpha", ["actor", "entity"]]],
@@ -2751,10 +2757,12 @@ class TestSessionInputs:
     def test_the_session_folder_records_its_inputs_at_the_start(self, tmp_path, monkeypatch):
         import json
         from datetime import datetime
+        from typing import cast
 
         import duckdb
 
         from deriva.adapters.database.manager import SCRIPTS_DIR
+        from deriva.adapters.llm.models import BenchmarkModelConfig
         from deriva.bench.benchmarking import BenchmarkConfig
         from deriva.services import config as config_service
 
@@ -2769,7 +2777,10 @@ class TestSessionInputs:
         orchestrator = BenchmarkOrchestrator(engine=engine, graph_manager=MagicMock(), archimate_manager=MagicMock(), config=BenchmarkConfig(repositories=["repo"], models=["m"]))
         orchestrator.session_start = datetime(2026, 10, 8, 9, 0, 0)
         orchestrator.session_id = "bench_20261008_090000"
-        orchestrator._model_configs = {"m": {"name": "m", "provider": "mistral", "model": "devstral", "api_key": "sk-secret"}, "unused": {"name": "unused"}}
+        # Plain mappings stand in for the configs (the record takes any mapping)
+        orchestrator._model_configs = cast(
+            dict[str, BenchmarkModelConfig], {"m": {"name": "m", "provider": "mistral", "model": "devstral", "api_key": "sk-secret"}, "unused": {"name": "unused"}}
+        )
 
         orchestrator._create_session()
 

@@ -6,7 +6,7 @@ from __future__ import annotations
 import dataclasses
 import json
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 from unittest.mock import patch
 
 from deriva.modules.derivation.base import Candidate, GraphLinkRule, RelationshipRule, derive_consolidated_relationships, derive_graph_link_relationships
@@ -55,8 +55,8 @@ class TestGraphLinks:
             return [{"a": a, "b": b} for a, b in SCREEN_LINKS] if cypher == "Q1" else []
 
         relationships = derive_consolidated_relationships(
-            all_elements=ELEMENTS, relationship_rules={}, llm_query_fn=None, graph_manager=SimpleNamespace(query=query), graph_links=self.RULES
-        )  # type: ignore[arg-type]
+            all_elements=ELEMENTS, relationship_rules={}, llm_query_fn=None, graph_manager=cast(Any, SimpleNamespace(query=query)), graph_links=self.RULES
+        )
 
         assert ("ac_proga", "Composition", "ai_mapa") in _triples(relationships) and asked.count("Q1") == 1
 
@@ -150,7 +150,7 @@ class TestGraphLinksOnAChannel:
         from deriva.modules.derivation.base import graph_link_pairs
 
         rows = [{"a": "unit::r::core", "b": "unit::r::billing", "channel": "rest"}, {"a": "x", "b": "y"}]
-        assert graph_link_pairs(SimpleNamespace(query=lambda q: rows), "Q") == [("unit::r::core", "unit::r::billing", "rest"), ("x", "y")]  # type: ignore[arg-type]
+        assert graph_link_pairs(cast(Any, SimpleNamespace(query=lambda q: rows)), "Q") == [("unit::r::core", "unit::r::billing", "rest"), ("x", "y")]
 
 
 class TestExclusiveGraphLinks:
@@ -181,7 +181,7 @@ class TestExclusiveGraphLinks:
             all_elements=[self.LIFE, self.SENT, self.DONE],
             relationship_rules=self.METAMODEL,
             llm_query_fn=None,
-            graph_manager=SimpleNamespace(query=query),  # type: ignore[arg-type]
+            graph_manager=cast(Any, SimpleNamespace(query=query)),
             graph_links=rules,
         )
 

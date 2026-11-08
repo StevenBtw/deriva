@@ -1,6 +1,6 @@
 [project]
 name = "deriva-cli"
-version = "0.8.10"
+version = "0.9.0"
 description = "Deriva is a research project aimed at enabling digital architects by automating the derivation of enterprise architecture models. Deriva uses dual knowledge graphs, heuristics and LLM's."
 # The PyPI page; README.md is the repository's own
 readme = "packages/README-deriva-cli.md"
@@ -35,38 +35,39 @@ classifiers = [
 
 dependencies = [
     # Core
-    "pydantic>=2",
-    "pydantic-settings>=2",
-    "python-dotenv>=1.2",
-    "pyyaml>=6.0",
-    "rich>=15",
-    "lxml>=6",
+    "pydantic>=2.14.3,<3",
+    "pydantic-settings>=2,<3",
+    "python-dotenv>=1.2,<2",
+    "pyyaml>=6.0,<7",
+    "rich>=15,<16",
+    "lxml>=6,<7",
     # Databases
-    "duckdb>=2",
-    "grafeo>=0.6.0",
+    "duckdb>=2,<3",
+    "grafeo>=0.6.1,<0.7",
     # Code Analysis (tree-sitter)
-    "tree-sitter>=0.26",
-    "tree-sitter-python>=0.23.0",
-    "tree-sitter-javascript>=0.23.0",
-    "tree-sitter-java>=0.23.0",
-    "tree-sitter-c-sharp>=0.23",
+    "tree-sitter>=0.26,<0.27",
+    "tree-sitter-python>=0.25,<0.26",
+    "tree-sitter-javascript>=0.25,<0.26",
+    "tree-sitter-java>=0.23.5,<0.24",
+    "tree-sitter-c-sharp>=0.23,<0.24",
+    "tree-sitter-go>=0.25,<0.26",
     # Document Parsing
-    "pypdf>=6",
-    "python-docx>=1.2",
+    "pypdf>=7.0,<8",
+    "python-docx>=1.2,<2",
     # NLP (business concept candidate terms; pinned, the versions decide the output; the spaCy pipelines download on first use)
-    "spacy==3.8.16",
-    "ctranslate2==4.8.4",
-    "sentencepiece==0.2.2",
+    "spacy==3.8.18",
+    "ctranslate2==4.8.5",
+    "sentencepiece==0.2.3",
     # Graph Algorithms
-    "solvor>=0.6.3",
+    "solvor>=0.6.3,<0.7",
     # LLM
     # CVE-2026-107286, CVE-2026-107287 fixed in 2.53; slim with only the providers model_registry.py
     # builds (azure, ollama, lmstudio and mistral go through the openai client), so no google, logfire or mcp stack
-    "pydantic-ai-slim[openai,anthropic]>=2.57",
+    "pydantic-ai-slim[openai,anthropic]>=2.57,<3",
     # Utilities
-    "httpx2>=2",
-    "lmdb>=1.6",
-    "typer>=0.27",
+    "httpx2>=2,<3",
+    "lmdb>=3,<4",
+    "typer>=0.28,<0.29",
     "tree-sitter-typescript==0.23.2",
 ]
 
@@ -77,8 +78,8 @@ dev = [
     "prek>=0.5",
     "pytest>=9",
     "pytest-cov>=7",
-    "ruff>=0.17",
-    "ty>=0.0",
+    "ruff>=0.17.4",
+    "ty>=0.0.99",
     "types-lxml>=2026.2",
 ]
 

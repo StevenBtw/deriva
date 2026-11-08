@@ -65,7 +65,7 @@ jobs:
         run: uv sync
 
       - name: Run ty type checker
-        run: uv run ty check deriva/ packages/
+        run: uv run ty check .
         env:
           PYTHONPATH: src
 

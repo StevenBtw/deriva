@@ -29,6 +29,8 @@ from dataclasses import dataclass, field
 from pathlib import PurePosixPath
 from typing import Any
 
+from deriva.common.naming import singularize
+
 
 @dataclass(frozen=True)
 class LifecycleRules:
@@ -41,6 +43,8 @@ class LifecycleRules:
     heading_noise: tuple[str, ...] = ("flow", "workflow", "overview", "steps")  # Heading words a process name drops
     unit_noise: tuple[str, ...] = ("service", "server", "backend", "frontend", "app", "api")  # Unit name words a stem drops
     name_templates: tuple[str, ...] = ("{object} Lifecycle",)
+    status_members: bool = False  # Status types beside a domain member join its domain (status_members())
+    verb_names: bool = False  # Name candidates from what happens to the object (verb_names())
 
 
 @dataclass
@@ -164,6 +168,83 @@ def _guarded(block: str, quoted: str, entity_of: Any, path: str) -> set[tuple[st
     return found
 
 
+def verb_names(life: Lifecycle, object_names: str | list[str], verbs: dict[str, str]) -> list[str]:
+    """Process names from what happens to the object (BusinessLayer params ``verb_names``): for each name of the object
+    in turn (the domain's object, then the entity's own name when it differs), "<Verb> <Object>" for each state that
+    names a verb (``verbs``: state -> verb, read by the caller), in state order, then "Manage <Object>"."""
+    names: list[str] = []
+    for name in dict.fromkeys(n.strip() for n in ([object_names] if isinstance(object_names, str) else object_names) if n.strip()):
+        names += [*(f"{verbs[s]} {name}" for s in life.states if verbs.get(s)), f"Manage {name}"]
+    return list(dict.fromkeys(names))
+
+
+def _folder_key(value: str, whole: bool = False) -> str:
+    """The comparable key of a file's folder name (or, ``whole``, of a name): letters and digits only, lowercase, in
+    the singular, so "businesses" and "Business" meet as "business" and "cargos" and "Cargo" as "cargo"."""
+    name = value if whole else PurePosixPath(value).parent.name
+    return singularize(re.sub(r"[^a-z0-9]", "", name.casefold()))
+
+
+def status_members(members: list[dict[str, Any]], files: dict[str, str], rules: LifecycleRules) -> list[dict[str, Any]]:
+    """The domain members with the status types that lie beside them (BusinessLayer params ``status_members``).
+
+    A status-named type often is no member of its business domain. In this order, it joins a member's domain:
+    1. when its file is named after the member plus a status word (``LoanStatus`` for ``Loan``); of several such files
+       the one whose folder shares the most trailing folder names with the member's wins, and a tie joins none;
+    2. when the member's file declares it as an enum;
+    3. when its file lies in the member's folder: in a folder of one domain to that domain, in a folder of several to
+       the one domain whose member's name starts the status type's name, else to the one domain the folder is named
+       after (``cargo/`` for Cargo), else to the one domain whose member files name the status type, else to none.
+    Each status type joins once.
+    """
+    ordered = sorted(members, key=lambda m: (m["path"], m["name"]))
+    known = {m["name"] for m in members}
+    added: list[dict[str, Any]] = []
+
+    def join(member: dict[str, Any], name: str, path: str) -> None:
+        if name not in known:
+            known.add(name)
+            added.append({**member, "name": name, "path": path})
+
+    def shared(a: str, b: str) -> int:
+        x, y = PurePosixPath(a).parent.parts[::-1], PurePosixPath(b).parent.parts[::-1]
+        n = 0
+        while n < min(len(x), len(y)) and x[n] == y[n]:
+            n += 1
+        return n
+
+    stems = {path: PurePosixPath(path).stem for path in sorted(files)}
+    words = {w.casefold() for w in rules.status_words}
+    for m in ordered:
+        named = [path for path, stem in stems.items() if stem.casefold().startswith(m["name"].casefold()) and stem[len(m["name"]) :].casefold() in words]
+        scored = sorted(((shared(path, m["path"]), path) for path in named), reverse=True)
+        if scored and (len(scored) == 1 or scored[0][0] > scored[1][0]):
+            join(m, stems[scored[0][1]], scored[0][1])
+    for m in ordered:
+        # A declaration with its body (Java, C#, Kotlin's enum class; the brace may follow on the next line), not an enum a
+        # comment names
+        code = re.sub(r"//[^\n]*|/\*.*?\*/", " ", files.get(m["path"], ""), flags=re.DOTALL)
+        for name in re.findall(r"\benum\s+(?:class\s+)?(\w+)[^{};]*\{", code):
+            if _is_status(name, rules):
+                join(m, name, m["path"])
+    in_folder: dict[str, list[dict[str, Any]]] = {}
+    for m in ordered:
+        in_folder.setdefault(str(PurePosixPath(m["path"]).parent), []).append(m)
+    for path, stem in stems.items():
+        here = in_folder.get(str(PurePosixPath(path).parent), [])
+        if not here or not _is_status(stem, rules):
+            continue
+        if len({m["domain"] for m in here}) == 1:
+            join(here[0], stem, path)
+        elif len(starts := {m["domain"]: m for m in here if stem.casefold().startswith(m["name"].casefold())}) == 1:
+            join(next(iter(starts.values())), stem, path)
+        elif len(named_folder := {m["domain"]: m for m in here if _folder_key(path) == _folder_key(m["object"], whole=True)}) == 1:
+            join(next(iter(named_folder.values())), stem, path)
+        elif len(mentions := {m["domain"]: m for m in here if re.search(rf"\b{re.escape(stem)}\b", files.get(m["path"], ""))}) == 1:
+            join(next(iter(mentions.values())), stem, path)
+    return [*members, *added]
+
+
 def detect_lifecycles(files: dict[str, str], members: list[dict[str, Any]], units: list[dict[str, Any]], rules: LifecycleRules, docs: dict[str, str]) -> list[Lifecycle]:
     """The lifecycles of the business domains.
 
@@ -182,21 +263,38 @@ def detect_lifecycles(files: dict[str, str], members: list[dict[str, Any]], unit
     specific: dict[str, dict[str, set[str]]] = defaultdict(lambda: defaultdict(set))
     generic: dict[str, dict[str, set[str]]] = defaultdict(lambda: defaultdict(set))
 
+    # Comments and string and character literals go first: a brace, bracket or comma inside one is no part of a
+    # declaration, and a state named inside one is no site. One pass, so whichever starts first wins: "//" in a URL
+    # string is no comment, a quote in a comment no string. Each file once, when an enum needs it
+    stripped: dict[str, str] = {}
+
+    def code_of(path: str) -> str:
+        if path not in stripped:
+            stripped[path] = re.sub(r'"(?:\\.|[^"\\])*"|\'(?:\\.|[^\'\\])*\'|//[^\n]*|/\*.*?\*/', " ", files.get(path, ""), flags=re.DOTALL)
+        return stripped[path]
+
     # Enums: a status-named domain member declared as an enum; its constants in order, its uses as sites
     for m in members:
-        text = files.get(m["path"], "")
-        declared = re.search(rf"\benum\s+{re.escape(m['name'])}\b[^{{]*\{{(.*?)(?:;|\}})", text, re.DOTALL)
+        code = code_of(m["path"])
+        declared = re.search(rf"\benum\s+(?:class\s+)?{re.escape(m['name'])}\b[^{{]*\{{", code)
         if not _is_status(m["name"], rules) or not declared:
             continue
-        body = re.sub(r"//[^\n]*|/\*.*?\*/|@\w+(\([^)]*\))?", " ", declared.group(1), flags=re.DOTALL)
-        states = [part.split("(")[0].strip() for part in body.split(",")]
-        states = [s for s in states if value.match(s)]
+        body = re.sub(r"@\w+(\([^)]*\))?", " ", _braced(code, declared.end()))
+        # An enum declares its states, in any naming style (SUBMITTED in Java, Submitted = 1 in C#). Constructor arguments
+        # (DRAFT(0, NONE)), attributes ([Display(Name = "Open")]) and a constant's own body (DRAFT { ... }) go first,
+        # innermost groups again and again, so no comma or name inside them counts; what follows ";" is members
+        while (bare := re.sub(r"\([^()]*\)|\[[^\[\]]*\]|\{[^{}]*\}", " ", body)) != body:
+            body = bare
+        states = [part.split("=")[0].strip() for part in body.split(";")[0].split(",")]
+        states = [s for s in states if re.fullmatch(r"[A-Za-z_]\w*", s)]
         key = f"{m['domain']}::{m['name']}"
         life = found.setdefault(key, Lifecycle(key=key, domain=m["domain"], entity=m["object"], attribute=m["name"], from_enum=True))
         life.states += [s for s in states if s not in life.states]
-        for path, text in files.items():
-            for s in re.findall(rf"\b{re.escape(m['name'])}\.({rules.value_pattern})\b", text):
-                specific[key][s].add(path)
+        # A use of one of the enum's own states is a site, whatever its naming style
+        for path in files:
+            for s in re.findall(rf"\b{re.escape(m['name'])}\.([A-Za-z_]\w*)\b", code_of(path)):
+                if s in life.states:
+                    specific[key][s].add(path)
 
     # ORM status attributes: classes of domain members with a status column
     tables: dict[str, str] = {}  # table name -> class

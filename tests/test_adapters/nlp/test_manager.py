@@ -12,8 +12,8 @@ from deriva.adapters.nlp import NlpTool, manager, translate
 
 def test_ensure_models_downloads_into_the_models_directory(tmp_path, monkeypatch):
     calls = []
-    monkeypatch.setattr(manager, "ensure_spacy", lambda models_dir, download: calls.append(("spacy", models_dir, download)))
-    monkeypatch.setattr(manager, "ensure_all", lambda models_dir, download: calls.append(("translation", models_dir, download)))
+    monkeypatch.setattr(manager, "ensure_spacy", lambda models_dir, download: calls.append(("spacy", models_dir, download)) or {})
+    monkeypatch.setattr(manager, "ensure_all", lambda models_dir, download: calls.append(("translation", models_dir, download)) or {})
 
     NlpTool(models_dir=tmp_path / "models").ensure_models()
 
@@ -40,17 +40,10 @@ def test_unknown_settings_are_refused_before_anything_loads(tmp_path):
 
 
 @pytest.fixture
-def spacy_models():
-    """The models directory holding the pinned spaCy pipelines, read only; without them the test is skipped instead of
-    downloading them (a test that depends on the network hides the next real failure)."""
-    from deriva.adapters.nlp.models import ensure_spacy
-
-    models_dir = NlpTool().models_dir
-    try:
-        ensure_spacy(models_dir, download=False)
-    except FileNotFoundError as missing:
-        pytest.skip(f"needs the pinned spaCy pipelines: {missing}")
-    return models_dir
+def spacy_models(pipelines, nlp_models_dir):
+    """The models directory holding the pinned spaCy pipelines, through the shared ``pipelines`` fixture (which downloads
+    them on a first run): the test runs in a fresh clone and in CI whatever the order, never skipped."""
+    return nlp_models_dir
 
 
 def test_extract_runs_in_process_with_the_given_settings(spacy_models, monkeypatch):
@@ -84,3 +77,14 @@ def test_the_real_models_give_english_forms():
     terms = {(c["language"], c["term"]): c["english"] for c in result["candidates"]}
     assert terms[("en", "Invoice")] == "invoice"
     assert terms[("de", "Rechnung")] == "invoice"
+
+
+def test_spacy_and_translation_models_of_one_language_are_both_reported(tmp_path, monkeypatch):
+    spacy = {"de": tmp_path / "de_core_news_sm", "en": tmp_path / "en_core_web_sm"}
+    translation = {"de": tmp_path / "opus-mt-de-en"}
+    monkeypatch.setattr(manager, "ensure_spacy", lambda models_dir, download: spacy)
+    monkeypatch.setattr(manager, "ensure_all", lambda models_dir, download: translation)
+
+    models = NlpTool(models_dir=tmp_path).ensure_models()
+
+    assert sorted(models) == ["de_core_news_sm", "en_core_web_sm", "opus-mt-de-en"]

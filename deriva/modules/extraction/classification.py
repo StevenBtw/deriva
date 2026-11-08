@@ -5,7 +5,8 @@ This module provides simple, lightweight functions for classifying files
 in repositories based on file extensions, patterns, and paths.
 
 Classification priority order:
-0. Excluded extensions (file type 'exclude', any length, e.g. '.archimate'): never an input, wherever the file lives
+0. Model files (an ArchiMate exchange file saved as .xml, found by the caller from its content) and excluded
+   extensions (file type 'exclude', any length, e.g. '.archimate'): never an input, wherever the file lives
 1. Path patterns (e.g., 'path:**/tests/**' matches any file in tests directory)
 2. Full filename match (e.g., 'requirements.txt', 'Makefile')
 3. Wildcard pattern match (e.g., 'test_*.py', '*.config.js')
@@ -21,6 +22,7 @@ from __future__ import annotations
 
 import fnmatch
 import re
+from collections.abc import Collection
 from pathlib import Path
 from typing import Any
 
@@ -73,7 +75,7 @@ def _match_path_pattern(file_path: str, pattern: str) -> bool:
         return fnmatch.fnmatch(normalized_path, pattern)
 
 
-def classify_files(file_paths: list[str], file_type_registry: list[dict[str, str]]) -> dict[str, Any]:
+def classify_files(file_paths: list[str], file_type_registry: list[dict[str, str]], model_files: Collection[str] = ()) -> dict[str, Any]:
     """
     Classify files based on file type registry.
 
@@ -92,6 +94,8 @@ def classify_files(file_paths: list[str], file_type_registry: list[dict[str, str
             Example: [{'extension': 'requirements.txt', 'file_type': 'dependency', 'subtype': 'python'}, ...]
             Example: [{'extension': 'test_*.py', 'file_type': 'test', 'subtype': 'python'}, ...]
             Example: [{'extension': 'path:**/tests/**', 'file_type': 'test', 'subtype': ''}, ...]
+        model_files: Paths whose content is an architecture model (an ArchiMate exchange file saved as .xml),
+            classified as excluded model files like '.archimate'
 
     Returns:
         Dict with:
@@ -152,7 +156,10 @@ def classify_files(file_paths: list[str], file_type_registry: list[dict[str, str
             filename = path.name.lower()
             extension = path.suffix.lower()
 
-            # Priority 0: excluded file types are never an input, wherever they live
+            # Priority 0: model files (found by their content) and excluded file types are never an input, wherever they live
+            if file_path in model_files:
+                classified.append({"path": file_path, "extension": extension, "file_type": "exclude", "subtype": "output"})
+                continue
             if extension in excluded_extensions:
                 type_info = excluded_extensions[extension]
                 classified.append({"path": file_path, "extension": extension, "file_type": type_info["file_type"], "subtype": type_info["subtype"]})

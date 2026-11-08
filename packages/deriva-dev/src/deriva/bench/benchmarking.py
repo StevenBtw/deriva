@@ -62,11 +62,12 @@ from deriva.adapters.llm.models import BenchmarkModelConfig
 from deriva.adapters.repository import RepoManager
 from deriva.bench import baseline_b1, session_metrics
 from deriva.common.json_utils import extract_json_from_response
-from deriva.common.ocel import OCELLog, create_run_id, hash_content, load_benchmark_ocel
+from deriva.common.ocel import OCELLog, create_run_id, edge_type, hash_content, load_benchmark_ocel, parse_edge_id
 from deriva.common.paths import workspace
 from deriva.common.settings import LlmSettings
 from deriva.common.timing import query_stats, summarize_run_events
 from deriva.modules.analysis import compute_consistency_score, decision_content, decision_stability
+from deriva.modules.analysis.measures import mean_measured, share_text
 from deriva.modules.analysis.model_quality import compute_model_quality
 from deriva.modules.analysis.semantic_matching import parse_archi_xml, parse_exchange_format_xml
 from deriva.services import config as config_service
@@ -2156,17 +2157,15 @@ class ElementStructuralStability:
     connections: list[ConnectionStability] = field(default_factory=list)
 
     @property
-    def structural_score(self) -> float:
-        """Average stability of all connections (0-100)."""
-        if not self.connections:
-            return 100.0  # No connections = fully stable
-        return sum(c.stability_score for c in self.connections) / len(self.connections)
+    def structural_score(self) -> float | None:
+        """Average stability of all connections (0-100); None without connections (nothing to compare)."""
+        return mean_measured(c.stability_score for c in self.connections)
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary."""
         return {
             "element_id": self.element_id,
-            "structural_score": round(self.structural_score, 2),
+            "structural_score": None if self.structural_score is None else round(self.structural_score, 2),
             "connections": [c.to_dict() for c in self.connections],
         }
 
@@ -2180,7 +2179,7 @@ class IntraModelMetrics:
     runs: int
     element_counts: list[int]
     count_variance: float
-    name_consistency: float  # % of element names in ALL runs
+    name_consistency: float | None  # % of element names in ALL runs; None: no element in any run
     stable_elements: list[str] = field(default_factory=list)  # Names in all runs
     unstable_elements: dict[str, int] = field(default_factory=dict)  # Name -> count of runs appeared
 
@@ -2228,7 +2227,7 @@ class InterModelMetrics:
     elements_by_model: dict[str, list[str]]
     overlap: list[str]  # Elements in ALL models
     unique_by_model: dict[str, list[str]]  # Elements unique to each model
-    jaccard_similarity: float
+    jaccard_similarity: float | None  # None: no element in any model
 
     # Edge comparison (extraction phase); None: no run of the models logged an edge
     edges_by_model: dict[str, list[str]] = field(default_factory=dict)
@@ -2473,9 +2472,10 @@ def detail_level_for_session(session_dir: Path, repositories: list[str], models:
                 for e in d.get("elements", []):
                     types[e["type"]] = types.get(e["type"], 0) + 1
 
-            def share(sets: list[set[Any]]) -> float:
+            def share(sets: list[set[Any]]) -> float | None:
+                # Nothing to compare (one run, or nothing in any run): no score
                 union = set().union(*sets)
-                return round(len(set.intersection(*sets)) / len(union), 3) if union else 1.0
+                return round(len(set.intersection(*sets)) / len(union), 3) if union and len(sets) >= 2 else None
 
             rows.append(
                 {
@@ -2489,6 +2489,11 @@ def detail_level_for_session(session_dir: Path, repositories: list[str], models:
                 }
             )
     return rows
+
+
+def _percent(value: float | None) -> str:
+    """A measure on the 0-100 scale as text, "n/a" when it is not measured."""
+    return "n/a" if value is None else f"{value:.1f}%"
 
 
 def _reference_elements(path: str | None) -> list[Any]:
@@ -2508,7 +2513,7 @@ class AnalysisSummary:
     intra_model: list[IntraModelMetrics]
     inter_model: list[InterModelMetrics]
     localization: InconsistencyLocalization
-    overall_consistency: float
+    overall_consistency: float | None  # None: nothing measured
     model_quality: list[dict[str, Any]] = field(default_factory=list)  # one row per exported run model
     detail_level: list[dict[str, Any]] = field(default_factory=list)  # the export's detail level per repository and model
     variance_split: list[dict[str, Any]] = field(default_factory=list)  # extraction vs derivation share (extraction per run)
@@ -2635,7 +2640,7 @@ class BenchmarkAnalyzer:
                 else:
                     unstable[elem] = count
 
-            consistency = len(stable) / len(all_elements) * 100 if all_elements else 100
+            consistency = len(stable) / len(all_elements) * 100 if all_elements else None
 
             # Build per-item stability scores for elements
             element_stability = [
@@ -2823,7 +2828,7 @@ class BenchmarkAnalyzer:
         """
         Compute consistency per edge/relationship type.
 
-        Edge/relationship IDs have format: {type}_{source}_{target}
+        Edge/relationship IDs have format: {type}|{source}|{target} (``create_edge_id``)
         This method extracts the type and computes consistency for each.
 
         Args:
@@ -2839,9 +2844,7 @@ class BenchmarkAnalyzer:
         type_objects: dict[str, set[str]] = {}
         for run_id, objects in objects_by_run.items():
             for obj_id in objects:
-                # Extract type from id: "CONTAINS_dir_a_file_b" -> "CONTAINS"
-                parts = obj_id.split("_", 1)
-                rel_type = parts[0] if parts else obj_id
+                rel_type = edge_type(obj_id)
                 if rel_type not in type_objects:
                     type_objects[rel_type] = set()
                 type_objects[rel_type].add(obj_id)
@@ -2865,7 +2868,7 @@ class BenchmarkAnalyzer:
         """
         Compute structural stability - how consistently elements maintain their connections.
 
-        Parses relationship IDs (format: {Type}_{Source}_{Target}) to extract connections,
+        Parses relationship IDs (format: {Type}|{Source}|{Target}) to extract connections,
         then measures how stable each connection is across runs.
 
         Args:
@@ -2884,16 +2887,15 @@ class BenchmarkAnalyzer:
         for elems in elements_by_run.values():
             all_elements.update(elems)
 
-        # Parse relationship IDs to extract connections per run
-        # Format: {Type}_{Source}_{Target}
+        # Parse relationship IDs to extract connections per run (an id from an event log before 0.9.0 cannot be split
+        # into its ends and gives no connection)
         connections_by_run: dict[str, set[tuple[str, str, str]]] = {}  # run -> (source, type, target)
 
         for run_id, rel_ids in relationships_by_run.items():
             connections_by_run[run_id] = set()
             for rel_id in rel_ids:
-                parts = rel_id.split("_", 2)  # Split into [type, source, target]
-                if len(parts) >= 3:
-                    rel_type, source, target = parts[0], parts[1], parts[2]
+                if parsed := parse_edge_id(rel_id):
+                    rel_type, source, target = parsed
                     connections_by_run[run_id].add((source, rel_type, target))
 
         # Compute structural stability for each element
@@ -2991,10 +2993,7 @@ class BenchmarkAnalyzer:
                 unique_by_model[model] = sorted(elems - other_elems)
 
             # Compute Jaccard similarity
-            if all_elements:
-                jaccard = len(overlap) / len(all_elements)
-            else:
-                jaccard = 1.0
+            jaccard = len(overlap) / len(all_elements) if all_elements else None
 
             # =================================================================
             # Edge comparison across models (extraction phase)
@@ -3102,8 +3101,8 @@ class BenchmarkAnalyzer:
         # Object type consistency from OCEL (0-1)
         for object_type in ("Element", "GraphNode", "Edge", "Relationship"):
             measured = [by_run for model, repo in pairs if any((by_run := self._objects_by_run(object_type, model, repo)).values())]
-            if measured:
-                by_element_type[object_type] = sum(compute_consistency_score(by_run) for by_run in measured) / len(measured)
+            if (score := mean_measured(compute_consistency_score(by_run) for by_run in measured)) is not None:
+                by_element_type[object_type] = score
 
         # Stage consistency from run stats: the spread of the counts (runs that did not extract have no node count)
         for stage, count_key in (("extraction", "nodes_created"), ("derivation", "elements_created")):
@@ -3124,22 +3123,22 @@ class BenchmarkAnalyzer:
                 by_stage[stage] = sum(scores) / len(scores)
 
         # Model consistency
-        model_scores: dict[str, list[float]] = {}
+        model_scores: dict[str, list[float | None]] = {}
         for metric in intra_metrics:
             if metric.model not in model_scores:
                 model_scores[metric.model] = []
             model_scores[metric.model].append(metric.name_consistency)
 
-        by_model = {m: sum(v) / len(v) for m, v in model_scores.items() if v}
+        by_model = {m: score for m, v in model_scores.items() if (score := mean_measured(v)) is not None}
 
         # Repository consistency
-        repo_scores: dict[str, list[float]] = {}
+        repo_scores: dict[str, list[float | None]] = {}
         for metric in intra_metrics:
             if metric.repository not in repo_scores:
                 repo_scores[metric.repository] = []
             repo_scores[metric.repository].append(metric.name_consistency)
 
-        by_repository = {r: sum(v) / len(v) for r, v in repo_scores.items() if v}
+        by_repository = {r: score for r, v in repo_scores.items() if (score := mean_measured(v)) is not None}
 
         # Identify hotspots (lowest consistency areas)
         hotspots = []
@@ -3254,13 +3253,7 @@ class BenchmarkAnalyzer:
         localization = self.localize_inconsistencies()
 
         # Compute overall consistency
-        all_consistencies: list[float] = []
-        for intra_metric in intra:
-            all_consistencies.append(intra_metric.name_consistency)
-        for inter_metric in inter:
-            all_consistencies.append(inter_metric.jaccard_similarity * 100)
-
-        overall = sum(all_consistencies) / len(all_consistencies) if all_consistencies else 100
+        overall = mean_measured([m.name_consistency for m in intra] + [None if m.jaccard_similarity is None else m.jaccard_similarity * 100 for m in inter])
 
         return AnalysisSummary(
             session_id=self.session_id,
@@ -3326,7 +3319,7 @@ class BenchmarkAnalyzer:
             f"# Benchmark Analysis: {summary.session_id}",
             "",
             f"**Analyzed:** {summary.analyzed_at}",
-            f"**Overall Consistency:** {summary.overall_consistency:.1f}%",
+            f"**Overall Consistency:** {_percent(summary.overall_consistency)}",
             "",
             "## Intra-Model Consistency",
             "",
@@ -3337,7 +3330,7 @@ class BenchmarkAnalyzer:
         ]
 
         for intra_m in summary.intra_model:
-            lines.append(f"| {intra_m.model} | {intra_m.repository} | {intra_m.runs} | {intra_m.name_consistency:.1f}% | {intra_m.count_variance:.2f} |")
+            lines.append(f"| {intra_m.model} | {intra_m.repository} | {intra_m.runs} | {_percent(intra_m.name_consistency)} | {intra_m.count_variance:.2f} |")
 
         lines.extend(
             [
@@ -3352,7 +3345,7 @@ class BenchmarkAnalyzer:
         )
 
         for inter_m in summary.inter_model:
-            lines.append(f"| {inter_m.repository} | {', '.join(inter_m.models)} | {len(inter_m.overlap)} | {inter_m.jaccard_similarity:.2f} |")
+            lines.append(f"| {inter_m.repository} | {', '.join(inter_m.models)} | {len(inter_m.overlap)} | {share_text(inter_m.jaccard_similarity, '.2f')} |")
 
         if summary.model_quality:
             lines.extend(
@@ -3430,7 +3423,7 @@ class BenchmarkAnalyzer:
                 [
                     self.session_id,
                     inter_m.repository,
-                    inter_m.jaccard_similarity * 100,
+                    None if inter_m.jaccard_similarity is None else inter_m.jaccard_similarity * 100,
                     json.dumps(inter_m.to_dict()),
                 ],
             )

@@ -9,6 +9,8 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
+from .measures import share_text
+
 __all__ = [
     "AnswerStability",
     "DecisionStability",
@@ -39,7 +41,7 @@ class ConfigDeviation:
     config_id: str  # node_type or step_name
     deviation_count: int  # Number of objects that deviate
     total_objects: int  # Total objects produced by this config
-    consistency_score: float  # 0.0 to 1.0 (1.0 = fully consistent)
+    consistency_score: float | None  # 0.0 to 1.0 (1.0 = fully consistent); None: nothing to compare (fewer than two runs, or no object in any run)
     deviating_objects: list[str] = field(default_factory=list)
     stable_objects: list[str] = field(default_factory=list)
 
@@ -56,7 +58,7 @@ class DeviationReport:
     analysis_timestamp: str
     total_runs: int
     total_deviations: int
-    overall_consistency: float
+    overall_consistency: float | None
     config_deviations: list[ConfigDeviation] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
@@ -174,8 +176,8 @@ class AnswerStability:
     identical: int  # of those, answered identically in every run
 
     @property
-    def score(self) -> float:
-        return self.identical / self.prompts if self.prompts else 1.0
+    def score(self) -> float | None:
+        return self.identical / self.prompts if self.prompts else None
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for JSON serialization."""
@@ -194,8 +196,8 @@ class DecisionStability:
     stable: int  # of those, with the same decision in every run
 
     @property
-    def score(self) -> float:
-        return self.stable / self.items if self.items else 1.0
+    def score(self) -> float | None:
+        return self.stable / self.items if self.items else None
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for JSON serialization."""
@@ -220,12 +222,12 @@ class StepConsistency:
     groups: dict[str, StepConsistency] = field(default_factory=dict)
 
     @property
-    def presence_score(self) -> float:
-        return self.present / self.total if self.total else 1.0
+    def presence_score(self) -> float | None:
+        return self.present / self.total if self.total and self.runs >= 2 else None
 
     @property
-    def exact_score(self) -> float:
-        return self.identical / self.total if self.total else 1.0
+    def exact_score(self) -> float | None:
+        return self.identical / self.total if self.total and self.runs >= 2 else None
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for JSON serialization."""
@@ -268,7 +270,7 @@ class PhaseStabilityReport:
     repository: str
     model: str
     total_runs: int
-    overall_consistency: float  # Average consistency across all types
+    overall_consistency: float | None  # Average consistency across all types; None: no type measured
 
     # For extraction phase
     node_breakdown: list[StabilityBreakdown] = field(default_factory=list)
@@ -432,7 +434,7 @@ class CrossRepoComparison:
     model: str
 
     # Per-repo metrics
-    consistency_by_repo: dict[str, float] = field(default_factory=dict)
+    consistency_by_repo: dict[str, float | None] = field(default_factory=dict)
     element_count_by_repo: dict[str, int] = field(default_factory=dict)
     precision_by_repo: dict[str, float] = field(default_factory=dict)
     recall_by_repo: dict[str, float] = field(default_factory=dict)
@@ -476,7 +478,7 @@ class BenchmarkReport:
     cross_repo: CrossRepoComparison | None = None
 
     # Summary metrics
-    overall_consistency: float = 0.0
+    overall_consistency: float | None = None
     overall_precision: float = 0.0
     overall_recall: float = 0.0
 
@@ -522,12 +524,12 @@ class BenchmarkReport:
         ]
 
         for repo in self.repositories:
-            consistency = self.stability_reports.get(repo, {}).get("derivation", PhaseStabilityReport("", repo, "", 0, 0.0)).overall_consistency
+            consistency = self.stability_reports.get(repo, {}).get("derivation", PhaseStabilityReport("", repo, "", 0, None)).overall_consistency
             semantic = self.semantic_reports.get(repo)
             precision = semantic.element_precision if semantic else 0.0
             recall = semantic.element_recall if semantic else 0.0
             f1 = semantic.element_f1 if semantic else 0.0
-            lines.append(f"| {repo} | {consistency:.1%} | {precision:.1%} | {recall:.1%} | {f1:.2f} |")
+            lines.append(f"| {repo} | {share_text(consistency)} | {precision:.1%} | {recall:.1%} | {f1:.2f} |")
 
         lines.extend(
             [
@@ -540,7 +542,7 @@ class BenchmarkReport:
         for repo, phases in self.stability_reports.items():
             lines.append(f"### {repo}")
             for phase, report in phases.items():
-                lines.append(f"**{phase.title()} Phase:** {report.overall_consistency:.1%} consistency")
+                lines.append(f"**{phase.title()} Phase:** {share_text(report.overall_consistency)} consistency")
                 if report.element_breakdown:
                     lines.append("| Element Type | Consistency | Stable | Unstable |")
                     lines.append("|--------------|-------------|--------|----------|")
@@ -552,7 +554,7 @@ class BenchmarkReport:
             lines.extend(["### LLM Answer Stability", "", "The same prompt given the same decisions in every run (raw LLM output; free text and confidence left out).", ""])
             for repo, steps in self.answer_stability.items():
                 lines.extend([f"**{repo}**", "", "| Step | Prompts | Identical | Score |", "|------|---------|-----------|-------|"])
-                lines.extend(f"| {s.step} | {s.prompts} | {s.identical} | {s.score:.1%} |" for s in steps)
+                lines.extend(f"| {s.step} | {s.prompts} | {s.identical} | {share_text(s.score)} |" for s in steps)
                 lines.append("")
 
         if self.semantic_reports:

@@ -33,8 +33,10 @@ def run_sets(snapshot: dict[str, Any]) -> dict[str, set]:
     for r in snapshot.get("relationships", []):
         s, t = by_id.get(r["source"], {}), by_id.get(r["target"], {})
         out["rel_name"].add((r["type"], s.get("name", "").strip().lower(), t.get("name", "").strip().lower()))
-        out["rel_source"].add((r["type"], s.get("source"), t.get("source")))
-        out[f"prov:{r.get('derived_from') or 'unknown'}"].add((r["type"], s.get("source"), t.get("source")))
+        # Each end by its type and source: elements of two types can share a graph node (a component and its function)
+        key = (r["type"], s.get("type"), s.get("source"), t.get("type"), t.get("source"))
+        out["rel_source"].add(key)
+        out[f"prov:{r.get('derived_from') or 'unknown'}"].add(key)
     graph = snapshot.get("graph") or {}
     out["graph_concepts"] = {c[0] for c in graph.get("concepts", [])}
     out["graph_concept_types"] = {(c[0], tuple(c[1])) for c in graph.get("concepts", [])}
@@ -47,10 +49,11 @@ def run_sets(snapshot: dict[str, Any]) -> dict[str, set]:
     return dict(out)
 
 
-def _score(runs: list[set]) -> tuple[int, int, float]:
+def _score(runs: list[set]) -> tuple[int, int, float | None]:
     union = set().union(*runs)
     common = set.intersection(*runs) if runs else set()
-    return len(common), len(union), (len(common) / len(union) if union else 1.0)
+    # Nothing to compare (fewer than two runs, or nothing in any run): no score
+    return len(common), len(union), (len(common) / len(union) if union and len(runs) >= 2 else None)
 
 
 def consistency_rows(runs: list[dict[str, set]]) -> list[dict[str, Any]]:

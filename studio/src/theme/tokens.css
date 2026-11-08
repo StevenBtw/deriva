@@ -250,6 +250,10 @@ tbody tr.clickable:hover td {
   position: relative;
   vertical-align: middle;
 }
+.toggle[aria-disabled="true"] {
+  opacity: 0.6;
+  cursor: progress;
+}
 .toggle::after {
   content: "";
   position: absolute;
@@ -359,7 +363,8 @@ tbody tr.clickable:hover td {
   background: var(--ok);
   margin-right: 4px;
 }
-.db-held .dot {
+.db-held .dot,
+.db-unanswered .dot {
   background: var(--warn);
 }
 .db-not_connected .dot {
@@ -1157,6 +1162,16 @@ table.rules tbody th {
 .card.models td {
   overflow-wrap: anywhere;
   vertical-align: top;
+}
+
+/* The Storage card's tables share their column widths (their colgroup), so the graph databases line up under the areas */
+.storage-table {
+  table-layout: fixed;
+  width: 100%;
+}
+
+.storage-table td {
+  overflow-wrap: anywhere;
 }
 
 .card.models td:last-child,

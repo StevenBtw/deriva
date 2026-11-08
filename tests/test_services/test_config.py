@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from unittest.mock import MagicMock, call
 
@@ -1841,6 +1842,13 @@ class TestAddDerivationStep:
 
         assert add_derivation_step(engine, "graph_relationships", "refine", 4) is False
 
+    def test_a_step_can_be_added_as_an_llm_step(self, engine):
+        """A step that classifies with the LLM is added with the flag that hands it the LLM, still disabled."""
+        from deriva.services.config import add_derivation_step
+
+        assert add_derivation_step(engine, "new_type", "generate", 21, llm=True) is True
+        assert engine.execute("SELECT enabled, llm FROM derivation_config WHERE step_name = 'new_type'").fetchone() == (False, True)
+
     @pytest.mark.parametrize(
         ("phase", "sequence", "params", "message"),
         [
@@ -1927,7 +1935,9 @@ class TestExtractionConfigParams:
         result = create_extraction_config_version(engine, "Technology", params='{"prompt": {"closing_instruction": "x"}}')
 
         assert result["new_version"] == 2
-        assert get_extraction_config(engine, "Technology").params == '{"prompt": {"closing_instruction": "x"}}'
+        cfg = get_extraction_config(engine, "Technology")
+        assert cfg is not None
+        assert cfg.params == '{"prompt": {"closing_instruction": "x"}}'
 
     def test_params_are_kept_when_other_fields_change(self):
         from deriva.services.config import create_extraction_config_version, get_extraction_config
@@ -1936,7 +1946,9 @@ class TestExtractionConfigParams:
         create_extraction_config_version(engine, "Technology", params='{"a": 1}')
         create_extraction_config_version(engine, "Technology", instruction="new")
 
-        assert get_extraction_config(engine, "Technology").params == '{"a": 1}'
+        cfg = get_extraction_config(engine, "Technology")
+        assert cfg is not None
+        assert cfg.params == '{"a": 1}'
 
 
 class TestReadOnlyConnection:
@@ -1978,6 +1990,7 @@ class TestLlmSamplesPerStep:
         ]
         monkeypatch.setattr(config, "get_extraction_configs", lambda engine, enabled_only=False: extraction)
         monkeypatch.setattr(config, "get_derivation_configs", lambda engine, enabled_only=False, phase=None, llm_only=None: derivation)
+        monkeypatch.setattr(config, "get_llm_samples", lambda engine: None)  # the llm_samples setting is not set
 
         assert config.llm_samples_per_step(object()) == {"DocConcepts": 3, "DirClasses": 1, "TypeA.naming": 1}
 
@@ -2307,3 +2320,108 @@ class TestResetVersions:
         assert engine.execute("SELECT step_name, version, params FROM derivation_config ORDER BY step_name").fetchall() == [("Artifact", 1, "c"), ("Node", 1, "b")]
         assert engine.execute("SELECT version, params FROM extraction_config").fetchall() == [(1, "x")]
         assert engine.execute("SELECT patterns FROM derivation_patterns").fetchall() == [('["a"]',)]
+
+
+class TestSavedQueriesAreReadOnly:
+    """A derivation config's queries run on the graph without a rollback: a write, schema, LOAD or file-reading
+    procedure is refused wherever a config is saved, with the read-only check's reason."""
+
+    WRITE = "CREATE CONSTRAINT FOR (n:Graph) REQUIRE n.id IS UNIQUE"
+    LOAD = "LOAD CSV FROM 'file:///x' AS row RETURN row"
+    PROCEDURE = "CALL grafeo.load_nodes_csv({path: 'x'}) YIELD rows RETURN rows"
+    READ = "MATCH (n:Graph:File) RETURN n"
+
+    @pytest.fixture
+    def engine(self):
+        import duckdb
+
+        con = duckdb.connect()
+        con.execute((Path(__file__).resolve().parents[2] / "deriva/adapters/database/scripts/schema.sql").read_text(encoding="utf-8"))
+        con.execute(
+            "INSERT INTO derivation_config (id, step_name, phase, version, sequence, enabled, llm, input_graph_query, is_active) "
+            f"VALUES (1, 'Node', 'generate', 1, 1, TRUE, FALSE, '{self.READ}', TRUE)"
+        )
+        yield con
+        con.close()
+
+    def active(self, engine):
+        return engine.execute("SELECT version, input_graph_query, params FROM derivation_config WHERE step_name = 'Node' AND is_active").fetchone()
+
+    def test_the_queries_of_a_config_are_its_query_columns_and_the_query_params(self):
+        from deriva.services.config import config_queries
+
+        params = json.dumps(
+            {
+                "graph_links": [{"query": "MATCH (a) RETURN a.id AS a, a.id AS b"}],
+                "component_services": {"interface_links": ["MATCH (i) RETURN i.id AS a, i.id AS b"], "object_links": ["MATCH (o) RETURN o.id AS a, o.id AS b"]},
+                "function_model": {"evidence": {"member_links": ["MATCH (m) RETURN m.id AS a, m.id AS b"]}},
+                "other": "MATCH (x) RETURN x",
+            }
+        )
+
+        assert [field for field, _ in config_queries("MATCH (g) RETURN g", "MATCH (e) RETURN e", params)] == [
+            "input_graph_query",
+            "input_model_query",
+            "params.graph_links[0].query",
+            "params.component_services.interface_links[0]",
+            "params.component_services.object_links[0]",
+            "params.function_model.evidence.member_links[0]",
+        ]
+        assert config_queries(None, None, "not json") == []
+
+    def test_a_versioned_save_refuses_a_query_that_writes_or_reads_files(self, engine):
+        from deriva.services import QueryRefused
+        from deriva.services.config import create_derivation_config_version
+
+        for query in (self.WRITE, self.LOAD, self.PROCEDURE):
+            with pytest.raises(QueryRefused, match="Node: input_graph_query: "):
+                create_derivation_config_version(engine, "Node", input_graph_query=query)
+        with pytest.raises(QueryRefused, match=r"Node: params\.graph_links\[0\]\.query: .*read-only procedures"):
+            create_derivation_config_version(engine, "Node", params=json.dumps({"graph_links": [{"query": self.PROCEDURE}]}))
+        assert self.active(engine) == (1, self.READ, None)
+        assert create_derivation_config_version(engine, "Node", input_graph_query="MATCH (n:Graph:Directory) RETURN n")["success"]
+
+    def test_an_unversioned_update_refuses_it_too(self, engine):
+        from deriva.services import QueryRefused
+        from deriva.services.config import update_derivation_config
+
+        with pytest.raises(QueryRefused, match="read-only"):
+            update_derivation_config(engine, "Node", input_graph_query=self.LOAD)
+        with pytest.raises(QueryRefused, match="read-only"):
+            update_derivation_config(engine, "Node", params=json.dumps({"component_services": {"interface_links": [self.WRITE]}}))
+        assert self.active(engine) == (1, self.READ, None)
+
+    def test_a_new_step_refuses_a_query_in_its_params(self, engine):
+        from deriva.services import QueryRefused
+        from deriva.services.config import add_derivation_step
+
+        with pytest.raises(QueryRefused, match=r"Linked: params\.function_model\.evidence\.member_links\[0\]"):
+            add_derivation_step(engine, "Linked", "generate", 5, params=json.dumps({"function_model": {"evidence": {"member_links": [self.LOAD]}}}))
+        assert engine.execute("SELECT count(*) FROM derivation_config WHERE step_name = 'Linked'").fetchone() == (0,)
+
+    def test_restoring_a_version_whose_query_is_refused_restores_nothing(self, engine):
+        from deriva.services.config import restore_config_version
+
+        # A version saved before saves were checked
+        engine.execute(
+            "INSERT INTO derivation_config (id, step_name, phase, version, sequence, enabled, llm, input_graph_query, is_active) "
+            f"VALUES (2, 'Node', 'generate', 0, 1, TRUE, FALSE, '{self.LOAD.replace(chr(39), chr(39) * 2)}', FALSE)"
+        )
+
+        result = restore_config_version(engine, "derivation", "Node", 0)
+
+        assert result["success"] is False and result["error"].startswith("Node: input_graph_query: ")
+        assert self.active(engine) == (1, self.READ, None)
+
+    def test_every_shipped_derivation_config_passes_the_check(self):
+        """The seed every new database starts from: none of its queries is refused."""
+        from deriva.services.config import check_config_queries, config_queries
+
+        rows = json.loads((Path(__file__).resolve().parents[2] / "deriva/adapters/database/data/derivation_config.json").read_text(encoding="utf-8"))
+        rows = rows if isinstance(rows, list) else next(iter(rows.values()))
+        checked = 0
+        for row in rows:
+            params = row.get("params") if isinstance(row.get("params"), str) or row.get("params") is None else json.dumps(row["params"])
+            check_config_queries(row["step_name"], row.get("input_graph_query"), row.get("input_model_query"), params)
+            checked += len(config_queries(row.get("input_graph_query"), row.get("input_model_query"), params))
+        assert checked > 40  # the shipped candidate, model and link queries

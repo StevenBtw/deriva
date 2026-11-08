@@ -185,6 +185,16 @@ describe("ConfigPage", () => {
     expect(screen.getByText("+ Temperature: 0.2")).toBeInTheDocument();
   });
 
+  it("history says each time is when the version was made", async () => {
+    // A shipped version keeps the time it was made, not when this database was seeded: the label says which it is
+    render(<ConfigPage stepType="extraction" title="Extraction config" />);
+    await screen.findByLabelText("Instruction");
+    await userEvent.click(screen.getByRole("tab", { name: "History" }));
+
+    expect(await screen.findByText("made 2026-10-08 01:00")).toBeInTheDocument();
+    expect(screen.getByText("made 2026-10-01 01:00")).toBeInTheDocument();
+  });
+
   it("edits params as JSON and refuses anything but an object", async () => {
     render(<ConfigPage stepType="extraction" title="Extraction config" />);
     await screen.findByLabelText("Instruction");

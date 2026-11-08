@@ -5,6 +5,7 @@ import re
 import pytest
 
 from deriva.adapters.archimate.models import (
+    ALL_ELEMENTS,
     BEHAVIOR_ELEMENTS,
     PASSIVE_ELEMENTS,
     RELATIONSHIP_TYPES,
@@ -173,7 +174,7 @@ class TestGetValidRelationshipsFrom:
             for target in targets:
                 assert isinstance(target, str)
                 # Target should be a known element type
-                assert target in STRUCTURE_ELEMENTS or target in BEHAVIOR_ELEMENTS or target in PASSIVE_ELEMENTS, f"Unknown target type: {target}"
+                assert target in ALL_ELEMENTS, f"Unknown target type: {target}"
 
     def test_data_object_can_access(self, metamodel):
         """DataObject should not typically be source of many relationships."""
@@ -182,7 +183,7 @@ class TestGetValidRelationshipsFrom:
         assert [(r["relationship_type"], r["allowed_targets"]) for r in result] == [
             ("Composition", ["DataObject"]),
             ("Aggregation", ["DataObject"]),
-            ("Realization", ["BusinessObject"]),
+            ("Realization", ["BusinessObject", "Contract"]),
         ]
 
     def test_application_service_relationships(self, metamodel):
@@ -301,10 +302,9 @@ class TestSpecRelationshipTable:
         valid = sum(1 for s in types for t in types for r in derivable if models.relationship_tier(s, r, t))
         non_association = [r for r in models.RELATIONSHIP_TYPES if r != "Association"]
         direct = sum(1 for s in types for t in types for r in non_association if models.relationship_tier(s, r, t) == "direct")
-        # 18 types (0.8.8: ApplicationFunction, Artifact, BusinessRole, BusinessService, TechnologyFunction); the tier
-        # from the metamodel figures
-        assert valid == 875
-        assert direct == 159
+        # The 35 core types; the tier from the metamodel figures
+        assert valid == 3400
+        assert direct == 481
 
     @pytest.mark.parametrize(
         ("source", "rel", "target", "tier", "figure"),
@@ -362,7 +362,7 @@ class TestSpecRelationshipTable:
     def test_valid_relationships_from_lists_only_spec_targets(self, metamodel):
         result = metamodel.get_valid_relationships_from("DataObject")
         by_type = {r["relationship_type"]: set(r["allowed_targets"]) for r in result}
-        assert by_type == {"Realization": {"BusinessObject"}, "Composition": {"DataObject"}, "Aggregation": {"DataObject"}}
+        assert by_type == {"Realization": {"BusinessObject", "Contract"}, "Composition": {"DataObject"}, "Aggregation": {"DataObject"}}
 
 
 class TestElement:
@@ -398,10 +398,11 @@ class TestRelationship:
         assert rel.relationship_type == "Serving"
 
     def test_relationship_auto_generates_identifier(self):
-        """Should auto-generate identifier if not provided."""
+        """Without a given identifier, one from type and ends: the same relationship gets the same one."""
         rel = Relationship(source="src", target="tgt", relationship_type="Serving")
-        assert re.fullmatch(r"id-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}", rel.identifier)
-        assert Relationship(source="src", target="tgt", relationship_type="Serving").identifier != rel.identifier
+        assert re.fullmatch(r"id-[0-9a-f]{32}", rel.identifier)
+        assert Relationship(source="src", target="tgt", relationship_type="Serving").identifier == rel.identifier
+        assert Relationship(source="src", target="tgt", relationship_type="Flow").identifier != rel.identifier
 
     def test_relationship_with_properties(self):
         """Should store custom properties."""
@@ -416,3 +417,121 @@ class TestStructuralRules:
         metamodel = ArchiMateMetamodel()
         assert metamodel.single_parent_relationship_types == frozenset({"Composition"})
         assert metamodel.acyclic_relationship_types == frozenset({"Composition"})
+
+
+class TestCoreMetamodel:
+    """The ArchiMate 3.2 core: the business, application and technology layers, nothing of strategy, motivation or physical."""
+
+    CORE = {
+        "Business": {
+            "BusinessActor",
+            "BusinessRole",
+            "BusinessCollaboration",
+            "BusinessInterface",
+            "BusinessProcess",
+            "BusinessFunction",
+            "BusinessInteraction",
+            "BusinessEvent",
+            "BusinessService",
+            "BusinessObject",
+            "Contract",
+            "Representation",
+            "Product",
+        },
+        "Application": {
+            "ApplicationComponent",
+            "ApplicationCollaboration",
+            "ApplicationInterface",
+            "ApplicationProcess",
+            "ApplicationFunction",
+            "ApplicationInteraction",
+            "ApplicationEvent",
+            "ApplicationService",
+            "DataObject",
+        },
+        "Technology": {
+            "Node",
+            "Device",
+            "SystemSoftware",
+            "TechnologyCollaboration",
+            "TechnologyInterface",
+            "Path",
+            "CommunicationNetwork",
+            "TechnologyProcess",
+            "TechnologyFunction",
+            "TechnologyInteraction",
+            "TechnologyEvent",
+            "TechnologyService",
+            "Artifact",
+        },
+    }
+
+    def test_every_core_type_has_its_layer_and_aspect_and_a_full_table(self):
+        from deriva.adapters.archimate.models import ELEMENT_TYPES, RELATIONSHIP_TABLE, layer_of
+
+        everything = set().union(*self.CORE.values())
+        assert set(ELEMENT_TYPES) == everything and len(everything) == 35
+        for layer, types in self.CORE.items():
+            assert {t for t in types if layer_of(t) == layer} == types
+            assert {ELEMENT_TYPES[t].layer for t in types} == {layer}
+        assert len(RELATIONSHIP_TABLE) == 35 * 35
+        assert not [cell for cell in RELATIONSHIP_TABLE.values() if "n" in cell.lower()]  # Influence is motivation's
+        assert {t.aspect for t in ELEMENT_TYPES.values()} == {"Structure", "Behavior", "Passive", "Composite"}
+        assert ELEMENT_TYPES["Product"].aspect == "Composite"
+
+    def test_the_groupings_by_aspect_hold_the_new_types(self):
+        from deriva.adapters.archimate.models import BEHAVIOR_ELEMENTS, ELEMENT_TYPES, PASSIVE_ELEMENTS, STRUCTURE_ELEMENTS
+
+        for groups, aspect in ((STRUCTURE_ELEMENTS, "Structure"), (BEHAVIOR_ELEMENTS, "Behavior"), (PASSIVE_ELEMENTS, "Passive")):
+            assert groups == {name for name, t in ELEMENT_TYPES.items() if t.aspect == aspect}
+
+    def test_direct_and_derived_follow_the_figures_for_the_new_types(self):
+        from deriva.adapters.archimate.models import relationship_tier as tier
+
+        # Within a layer, as the types the table already had
+        assert tier("ApplicationProcess", "Realization", "ApplicationService") == "direct"
+        assert tier("ApplicationComponent", "Assignment", "ApplicationProcess") == "direct"
+        assert tier("ApplicationEvent", "Triggering", "ApplicationProcess") == "direct"
+        assert tier("TechnologyInterface", "Assignment", "TechnologyService") == "direct"
+        assert tier("Node", "Assignment", "TechnologyProcess") == "direct"
+        assert tier("BusinessCollaboration", "Assignment", "BusinessInteraction") == "direct"
+        assert tier("Contract", "Specialization", "Contract") == "direct"
+        # Fig. 104, 105: a service serves behaviour across layers, an interface the active structure
+        assert tier("ApplicationService", "Serving", "BusinessProcess") == "direct"
+        assert tier("ApplicationService", "Serving", "BusinessCollaboration") == "derived"
+        assert tier("TechnologyService", "Serving", "ApplicationCollaboration") == "derived"
+        assert tier("ApplicationInterface", "Serving", "BusinessCollaboration") == "direct"
+        # Triggering and flow between an event and a service stay derived, as for the business event
+        assert tier("ApplicationEvent", "Triggering", "ApplicationService") == "derived"
+        assert tier("TechnologyService", "Flow", "TechnologyEvent") == "derived"
+        # Not allowed at all stays not allowed
+        assert tier("Path", "Access", "CommunicationNetwork") is None
+
+    def test_the_cells_of_the_first_eighteen_types_did_not_move(self):
+        """Derived models depend on them: checked by hash against the table before the core was completed."""
+        import hashlib
+
+        from deriva.adapters.archimate.models import RELATIONSHIP_TABLE
+
+        first = (
+            "ApplicationComponent",
+            "ApplicationFunction",
+            "ApplicationInterface",
+            "ApplicationService",
+            "Artifact",
+            "BusinessActor",
+            "BusinessEvent",
+            "BusinessFunction",
+            "BusinessObject",
+            "BusinessProcess",
+            "BusinessRole",
+            "BusinessService",
+            "DataObject",
+            "Device",
+            "Node",
+            "SystemSoftware",
+            "TechnologyFunction",
+            "TechnologyService",
+        )
+        joined = "|".join(f"{s}>{t}={''.join(sorted(RELATIONSHIP_TABLE[(s, t)]))}" for s in first for t in first)
+        assert hashlib.sha256(joined.encode()).hexdigest() == "5362aae53e547304d63f1416a8528f550b2a4bf98d681db49f12b5d0319b16ac"

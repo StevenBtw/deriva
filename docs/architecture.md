@@ -28,7 +28,7 @@ Repository --> Extraction --> Graph --> Derivation --> ArchiMate model --> Expor
               and view, which Archi and other tools import
 ```
 
-Most extraction is deterministic: directories and files come from the file system, type definitions and methods from parsing the code with tree-sitter (Python, JavaScript, Java and C#) or with structural parsers (COBOL programs and copybooks, JCL jobs and BMS screen maps), dependencies and tests from parsers. LLM steps classify within closed sets, for example which documented terms are business concepts. Derivation picks its candidates from the graph with queries and graph properties, and asks the LLM to classify and name them.
+Most extraction is deterministic: directories and files come from the file system, type definitions and methods from parsing the code with tree-sitter (Python, JavaScript, TypeScript, Java, C# and Go) or with structural parsers (COBOL programs and copybooks, JCL jobs and BMS screen maps), dependencies and tests from parsers. LLM steps classify within closed sets, for example which documented terms are business concepts. Derivation picks its candidates from the graph with queries and graph properties, and asks the LLM to classify and name them.
 
 ## Abstraction levels
 
@@ -44,7 +44,7 @@ Which element types sit on which level is a versioned table (the `abstraction_le
 
 ### The component hierarchy
 
-The `BuildModule` extraction step finds the folders with a build manifest and code of their own (manifests such as Maven's, npm's, uv's or Gradle's, from a versioned list), and a parent system where an aggregator manifest lists at least two of them. The hierarchy goes from systems to units to modules to libraries:
+The `BuildModule` extraction step finds the folders with a build manifest and code of their own (manifests such as Maven's, npm's, uv's, Gradle's or a .NET project file, from a versioned list), and a parent system where an aggregator manifest lists at least two of them. The hierarchy goes from systems to units to modules to libraries:
 
 - a system holds the units and modules in its folders;
 - the only deployable unit at a module's folder holds that module; several units there are the module's entry points, and the module holds them;
@@ -189,6 +189,23 @@ The studio's **Runs & storage** page shows what each part of the workspace takes
 ### Settings
 
 `deriva.common.settings` is the only code that reads configuration from the environment. It merges the home folder's `.env` with the process environment, and the process environment wins. Settings come in typed groups by prefix: `LLM_`, `GRAFEO_`, `GRAPH_`, `ARCHIMATE_`, `DERIVA_NLP_` and `REPOSITORY_`. Only the LLM providers' own keys (such as `OPENAI_API_KEY`, `ANTHROPIC_API_KEY` and `MISTRAL_API_KEY`) are passed on to the process environment for the provider libraries, and never over a variable that is already set.
+
+## Where the LLM decides
+
+Structure gives every candidate, every identifier and the relationships between elements. The LLM makes a few decisions that structure cannot make, each one a choice from a closed set that structure proposes. Compared with a run in which every LLM answer is empty, these are the decisions that change the model:
+
+| Decision | What structure proposes | What the LLM chooses |
+| --- | --- | --- |
+| Actors from the documentation | The people and organizations the documentation names next to the system, without generic words for people, each with the sentence that names it | Which of them use the application or are served by it |
+| Applications | The top-level components | Which belong to one application, named by a part of the README title; with no documentation shown, structure decides |
+| Interface role | Files and methods that look like entry points | Which are interfaces, and what kind |
+| Service names | Name candidates from the component's interfaces, ordered by how much of the component each covers | The object or activity of the service; its verb stays structural |
+| Tooling | The repository's deployable units, with the README title and lines | Which units are tooling around the product rather than part of it |
+| Software an image runs | Every container image, among the technology items it labels | The system each image runs, or none; this changes the model only for an image that is not on the closed list of technologies |
+
+The LLM also labels the documentation's terms, directories and technologies, which feed later steps. Everything else, the element types, the levels and the relationships, comes from structure: given the same LLM answers, it is the same in every run. Steps marked experimental may use the LLM in further ways; they are off by default.
+
+Two of these decisions can still differ between runs on the same repository. The grouping into applications can leave a component out of its application in one run: identifiers stay the same, but the component and its relationships move in or out of the enterprise level. A service's chosen object can differ when several candidates cover a component about equally: the service keeps its identifier and gets another name. The solution level, which holds the units, modules, interfaces and data objects, does not depend on either.
 
 ## Design decisions
 

@@ -29,7 +29,7 @@ const OVERVIEW = {
     { key: "oldrepo", bytes: 2_500_000, kind: "orphaned" as const, active: false },
     { key: "default", bytes: 300_000, kind: "shared" as const, active: false },
   ],
-  llm_cache: { bytes: 2_444_000_000, files: 183 },
+  llm_cache: { bytes: 2_444_000_000, files: 2, entries: 183 },
   exports: { bytes: 10_100_000, files: 57 },
   benchmark_sessions: { bytes: 9_536_500_000, sessions: 944 },
   runs: { runs: 11, bytes: 2_900_000 },
@@ -110,7 +110,7 @@ describe("Storage", () => {
   beforeEach(() => {
     vi.mocked(runs.history).mockResolvedValue([]);
     vi.mocked(storage.overview).mockResolvedValue(OVERVIEW);
-    vi.mocked(storage.clearLlmCache).mockResolvedValue({ bytes: 2_444_000_000, files: 183 });
+    vi.mocked(storage.clearLlmCache).mockResolvedValue({ bytes: 2_444_000_000, files: 2, entries: 183 });
     vi.mocked(storage.deleteExports).mockResolvedValue({ bytes: 10_100_000, files: 57 });
     vi.mocked(storage.deleteGraph).mockResolvedValue({ key: "oldrepo", bytes: 2_500_000 });
   });
@@ -120,7 +120,8 @@ describe("Storage", () => {
 
     const card = (await screen.findByRole("heading", { name: "Storage" })).closest(".card") as HTMLElement;
     expect(within(card).getByText("2.3 GB")).toBeInTheDocument();
-    expect(within(card).getByText("183 files")).toBeInTheDocument();
+    // The cache holds answers: their count, not its (lmdb) files
+    expect(within(card).getByText("183 answers")).toBeInTheDocument();
     expect(within(card).getByText("944 sessions")).toBeInTheDocument();
     expect(within(card).getByText("11 runs")).toBeInTheDocument();
     const orphan = within(card).getByRole("cell", { name: "oldrepo" }).closest("tr")!;
@@ -128,6 +129,24 @@ describe("Storage", () => {
     expect(within(orphan).getByRole("button", { name: "Delete" })).toBeEnabled();
     const own = within(card).getByRole("cell", { name: "deriva" }).closest("tr")!;
     expect(within(own).queryByRole("button", { name: "Delete" })).not.toBeInTheDocument();
+  });
+
+  it("counts a cache whose answers are unknown by its files", async () => {
+    vi.mocked(storage.overview).mockResolvedValue({ ...OVERVIEW, llm_cache: { bytes: 150, files: 2, entries: null } });
+    render(<Storage />);
+
+    const card = (await screen.findByRole("heading", { name: "Storage" })).closest(".card") as HTMLElement;
+    expect(await within(card).findByText("2 files")).toBeInTheDocument();
+  });
+
+  it("lines the graph databases up under the areas: both tables share their column widths", async () => {
+    render(<Storage />);
+
+    const card = (await screen.findByRole("heading", { name: "Storage" })).closest(".card") as HTMLElement;
+    const widths = [...card.querySelectorAll("table")].map((table) => [...table.querySelectorAll("col")].map((col) => col.style.width));
+    expect(widths).toHaveLength(2);
+    expect(widths[0]).toEqual(["40%", "15%", "25%", "20%"]);
+    expect(widths[1]).toEqual(widths[0]);
   });
 
   it("warns before clearing the LLM cache and says what was freed", async () => {

@@ -44,7 +44,9 @@ export type CoverageRow = {
   extension: string;
   files: number;
   in_graph: number;
+  // The most common file type; file_types has every type with its files, most first
   file_type: string | null;
+  file_types: { file_type: string; files: number }[];
   subtype: string | null;
   reader: "parser" | "llm" | null;
   with_symbols: number;
@@ -76,7 +78,8 @@ export type RepositoryData = {
 /** What the workspace keeps on disk; a graph database is a repository's, the shared one, or orphaned (its repository is gone). */
 export type StorageOverview = {
   graphs: { key: string; bytes: number; kind: "repository" | "shared" | "orphaned"; active: boolean }[];
-  llm_cache: { bytes: number; files: number };
+  // entries: the cached answers (null when the folder holds no lmdb map); bytes: what they take, not the map file
+  llm_cache: { bytes: number; files: number; entries: number | null };
   exports: { bytes: number; files: number };
   benchmark_sessions: { bytes: number; sessions: number };
   runs: { runs: number; bytes: number };
@@ -255,7 +258,8 @@ export type BenchmarkRequest = {
   no_cache_extraction: boolean;
   description?: string;
 };
-export type ConsistencyRow = { key: string; common: number; union: number; score: number };
+/** score: null when nothing was produced in any run (nothing to compare, shown as n/a) */
+export type ConsistencyRow = { key: string; common: number; union: number; score: number | null };
 export type BenchmarkGroup = {
   repository: string;
   model: string;
@@ -263,7 +267,8 @@ export type BenchmarkGroup = {
   counts: { label: string; elements: number; relationships: number }[];
   rows: ConsistencyRow[];
 };
-export type StepStability = { step: string; prompts: number; identical: number; score: number };
+/** score: null when no prompt was asked in every run */
+export type StepStability = { step: string; prompts: number; identical: number; score: number | null };
 export type Flip = {
   type: string;
   source: string;
@@ -334,6 +339,16 @@ export type NodeType = {
 };
 export type EdgeType = { name: string; count: number; pairs: [string, string][] };
 export type IntermediateOntology = { groups: string[]; node_types: NodeType[]; edge_types: EdgeType[]; other_steps: OntologyStep[] };
-export type OutputElementType = { name: string; layer: string; count: number; step: { enabled: boolean; version: number | null } | null };
+export type OutputStep = { name: string; enabled: boolean; version: number | null; shipped: boolean };
+/** ``steps``: every step that makes the type; ``needs``: the types its elements are built on. */
+export type OutputElementType = {
+  name: string;
+  layer: string;
+  aspect: string;
+  count: number;
+  step: { enabled: boolean; version: number | null } | null;
+  steps: OutputStep[];
+  needs: string[];
+};
 export type RelationshipRule = { source: string; target: string; direct: string[]; derived: string[] };
 export type OutputOntology = { element_types: OutputElementType[]; relationship_types: { name: string; count: number }[]; rules: RelationshipRule[] };

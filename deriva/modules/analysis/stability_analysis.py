@@ -16,7 +16,9 @@ from collections.abc import Callable
 from typing import Any
 
 from deriva.common.json_utils import extract_json_from_response
+from deriva.common.ocel import parse_edge_id
 
+from .measures import mean_measured
 from .types import AnswerStability, DecisionStability, PhaseStabilityReport, StabilityBreakdown, StepConsistency
 
 __all__ = [
@@ -149,6 +151,10 @@ def extract_edge_type(edge_id: str) -> str:
     Returns:
         Edge type name or "Unknown"
     """
+    # The format of create_edge_id: TYPE|source|target
+    if parsed := parse_edge_id(edge_id):
+        return parsed[0]
+
     # Check for TYPE:source:target pattern
     if ":" in edge_id:
         parts = edge_id.split(":")
@@ -199,6 +205,10 @@ def extract_relationship_type(rel_id: str) -> str:
     Returns:
         Relationship type name or "Unknown"
     """
+    # The format of create_edge_id: Type|source|target
+    if parsed := parse_edge_id(rel_id):
+        return parsed[0]
+
     rel_types = [
         "Composition",
         "Aggregation",
@@ -248,8 +258,8 @@ def compute_type_breakdown(
     Returns:
         List of StabilityBreakdown, one per type
     """
-    if not objects_by_run:
-        return []
+    if len(objects_by_run) < 2:
+        return []  # Nothing to compare: no breakdown, and the phase is not measured
 
     num_runs = len(objects_by_run)
 
@@ -277,7 +287,8 @@ def compute_type_breakdown(
         total_count = len(obj_counts)
         stable_count = len(stable_items)
         unstable_count = len(unstable_items)
-        consistency = stable_count / total_count if total_count > 0 else 0.0
+        # A type is here because some run produced it, so there is always something to compare
+        consistency = stable_count / total_count
 
         breakdowns.append(
             StabilityBreakdown(
@@ -333,11 +344,7 @@ def compute_phase_stability(
             edge_breakdown = compute_type_breakdown(edges_by_run, extract_edge_type, "extraction")
 
         # Calculate overall consistency
-        all_breakdowns = node_breakdown + edge_breakdown
-        if all_breakdowns:
-            overall = sum(b.consistency_score for b in all_breakdowns) / len(all_breakdowns)
-        else:
-            overall = 0.0
+        overall = mean_measured(b.consistency_score for b in node_breakdown + edge_breakdown)
 
         reports["extraction"] = PhaseStabilityReport(
             phase="extraction",
@@ -365,11 +372,7 @@ def compute_phase_stability(
             relationship_breakdown = compute_type_breakdown(relationships_by_run, extract_relationship_type, "derivation")
 
         # Calculate overall consistency
-        all_breakdowns = element_breakdown + relationship_breakdown
-        if all_breakdowns:
-            overall = sum(b.consistency_score for b in all_breakdowns) / len(all_breakdowns)
-        else:
-            overall = 0.0
+        overall = mean_measured(b.consistency_score for b in element_breakdown + relationship_breakdown)
 
         reports["derivation"] = PhaseStabilityReport(
             phase="derivation",
@@ -518,8 +521,8 @@ def aggregate_stability_metrics(
                 relationship_type_scores[breakdown.item_type].append(breakdown.consistency_score)
 
     # Calculate averages
-    avg_extraction = sum(extraction_consistencies) / len(extraction_consistencies) if extraction_consistencies else 0.0
-    avg_derivation = sum(derivation_consistencies) / len(derivation_consistencies) if derivation_consistencies else 0.0
+    avg_extraction = mean_measured(extraction_consistencies)
+    avg_derivation = mean_measured(derivation_consistencies)
 
     # Calculate per-type averages and sort
     element_type_avgs = [(t, sum(scores) / len(scores)) for t, scores in element_type_scores.items()]
@@ -596,6 +599,8 @@ def decision_stability(runs: list[dict[str, Any]]) -> DecisionStability:
         runs: Per run, the step's decision per item (``None`` for an item it skipped). An item
             missing from a run's decisions differs from every decision, ``None`` included.
     """
+    if len(runs) < 2:
+        return DecisionStability(items=0, stable=0)  # Nothing to compare: no score
     missing = object()
     items = set().union(*runs) if runs else set()
     stable = sum(1 for item in items if len({repr(run.get(item, missing)) for run in runs}) == 1)

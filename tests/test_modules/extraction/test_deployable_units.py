@@ -293,7 +293,7 @@ def test_the_product_name_is_the_first_part_of_the_root_readme_title():
     units = _named(_container("shop"), documents={"r/README.md": "# Shop Platform - Online Store for Teas\n"})
 
     assert units["r/shop"].product == "Shop Platform"
-    assert _named(_container("shop"))["r/shop"].product == "r"  # no README, no root manifest: the repository name
+    assert _named(_container("shop"))["r/shop"].product == "R"  # no README, no root manifest: the repository name as words
 
 
 def test_a_readme_title_naming_the_product_and_the_folder_gives_one_candidate():
@@ -616,3 +616,222 @@ def test_name_candidates_do_not_depend_on_the_order_of_the_inputs():
     assert {k: u.name_candidates for k, u in forward.items()} == {k: u.name_candidates for k, u in backward.items()}
     # A manifest name with capitals keeps its own casing (a lower case one takes title case: "Lease Ops" above)
     assert ("TeaShop UI", "manifest") in forward["r/web"].name_candidates
+
+
+def test_a_csproj_entry_point_makes_a_unit_and_a_class_library_does_not():
+    rules = UnitRules(code_subtypes=frozenset({"csharp"}))
+    files = [
+        _file("r/Api/Api.csproj"),
+        _file("r/Api/Program.cs", "csharp"),
+        _file("r/Job/Job.csproj"),
+        _file("r/Job/Program.cs", "csharp"),
+        _file("r/Core/Core.csproj"),
+        _file("r/Core/Order.cs", "csharp"),
+    ]
+    manifests = {
+        "r/Api/Api.csproj": '<Project Sdk="Microsoft.NET.Sdk.Web"></Project>',
+        "r/Job/Job.csproj": '<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><OutputType>Exe</OutputType></PropertyGroup></Project>',
+        "r/Core/Core.csproj": '<Project Sdk="Microsoft.NET.Sdk" />',
+    }
+
+    units = detect_units(RepoFacts(repository="r", files=files, manifests=manifests), rules)
+
+    assert [(u.path, u.kind) for u in units] == [("r/Api", "web"), ("r/Job", "exe")]
+
+
+class TestToolingCheck:
+    """params.tool_check: one closed LLM label per unit (application or tooling); structure proposes, the answer only
+    excludes, anything else keeps the unit."""
+
+    def _unit(self, path, **kw):
+        from deriva.modules.extraction.deployable_units import Unit
+
+        return Unit(path=path, name=path.rsplit("/", 1)[-1], kind=kw.pop("kind", "container"), **kw)
+
+    def test_a_lone_unit_is_the_system_and_is_not_asked(self):
+        from deriva.modules.extraction.deployable_units import tool_candidates
+
+        assert tool_candidates([self._unit("r/app")]) == []
+
+    def test_units_structure_excluded_are_not_asked_and_do_not_count(self):
+        from deriva.modules.extraction.deployable_units import tool_candidates
+
+        units = [self._unit("r/app"), self._unit("r/dev", excluded="tooling")]
+        assert tool_candidates(units) == []
+        units.append(self._unit("r/admin"))
+        assert [u.path for u in tool_candidates(units)] == ["r/admin", "r/app"]
+
+    def test_the_order_does_not_depend_on_the_input_order(self):
+        from deriva.modules.extraction.deployable_units import tool_candidates
+
+        units = [self._unit("r/b"), self._unit("r/a"), self._unit("r/a", entry="cli")]
+        assert [(u.path, u.entry) for u in tool_candidates(units)] == [(u.path, u.entry) for u in tool_candidates(units[::-1])]
+
+    def test_two_units_in_one_folder_get_two_keys(self):
+        from deriva.modules.extraction.deployable_units import tool_key
+
+        assert tool_key(self._unit("r/a", entry="cli")) != tool_key(self._unit("r/a", entry="web"))
+        assert tool_key(self._unit("r/m", kind="online")) != tool_key(self._unit("r/m", kind="batch"))
+
+    def test_only_a_tooling_label_excludes(self):
+        from deriva.modules.extraction.deployable_units import parse_tools
+
+        keys = ["r/a", "r/b", "r/c"]
+        assert parse_tools('{"units": {"r/a": "tooling", "r/b": "application", "r/c": "TOOLING"}}', keys) == {"r/a"}
+
+    def test_an_unreadable_or_partial_answer_keeps_every_other_unit(self):
+        from deriva.modules.extraction.deployable_units import parse_tools
+
+        keys = ["r/a", "r/b"]
+        assert parse_tools("not json", keys) == set()
+        assert parse_tools('{"units": ["r/a"]}', keys) == set()
+        assert parse_tools("[]", keys) == set()
+        assert parse_tools('{"units": {"r/b": "tooling", "r/zz": "tooling"}}', keys) == {"r/b"}
+
+    def test_the_schema_closes_the_labels_and_names_every_unit(self):
+        from deriva.modules.extraction.deployable_units import TOOL_LABELS, tool_schema
+
+        schema = tool_schema(["r/a", "r/b"])
+        units = schema["properties"]["units"]
+        assert units["required"] == ["r/a", "r/b"]
+        assert all(v["enum"] == list(TOOL_LABELS) for v in units["properties"].values())
+
+    def test_the_prompt_holds_the_instruction_and_every_unit_once(self):
+        from deriva.modules.extraction.deployable_units import build_tool_prompt
+
+        units = [self._unit("r/a", readme_title="A"), self._unit("r/b", manifest_description="B tool")]
+        prompt = build_tool_prompt("INSTRUCTION TEXT", units, "Product")
+        assert prompt.startswith("INSTRUCTION TEXT")
+        assert prompt.count('"key": "r/a"') == 1 and prompt.count('"key": "r/b"') == 1
+        assert "B tool" in prompt and "Product" in prompt
+
+    def test_the_unit_at_the_repository_root_is_the_system_and_is_not_asked(self):
+        from deriva.modules.extraction.deployable_units import tool_candidates
+
+        units = [self._unit("r"), self._unit("r/admin"), self._unit("r/app")]
+        assert [u.path for u in tool_candidates(units, "r")] == ["r/admin", "r/app"]
+        assert [u.path for u in tool_candidates(units)] == ["r", "r/admin", "r/app"]
+
+
+# Names from structure, also where the documentation or the folders are written for machines
+SPLIT = UnitRules(
+    code_subtypes=NAMING.code_subtypes,
+    generic_words=NAMING.generic_words,
+    kind_nouns=NAMING.kind_nouns,
+    split_suffixes=("service", "server"),
+)
+
+
+def _repo_units(repository: str, files, rules=NAMING, **facts):
+    return {u.path: u for u in detect_units(RepoFacts(repository=repository, files=files, **facts), rules)}
+
+
+def test_a_heading_inside_a_code_block_is_no_readme_title():
+    documents = {"r/shop/README.md": "```\n# set the port first\n```\n\n# Storefront Service\n"}
+
+    assert _units(_container("shop"), documents=documents)["r/shop"].readme_title == "Storefront Service"
+
+
+def test_a_first_heading_below_level_one_is_a_section_not_the_product():
+    """A README that opens with a banner and then "## Architecture" has no title: the manifest names the product."""
+    documents = {"r/README.md": "Banner text.\n\n## Architecture\n\nThe parts.\n"}
+    manifests = {"r/package.json": '{"name": "lease-desk"}'}
+
+    assert _named(_container("shop"), documents=documents, manifests=manifests)["r/shop"].product == "Lease Desk"
+
+
+def test_without_a_title_or_a_manifest_the_product_is_the_repository_name_written_as_words():
+    documents = {"lease-desk/README.md": "## Architecture\n"}
+
+    units = _repo_units("lease-desk", [_file("lease-desk/shop/Dockerfile"), _file("lease-desk/shop/App.java", "java")], documents=documents)
+
+    assert units["lease-desk/shop"].product == "Lease Desk"
+
+
+def test_the_first_of_several_level_one_headings_is_the_product_only_when_it_shares_a_word_with_the_repository():
+    sections = {"lease-desk/README.md": "# Status\n\nStable.\n\n# Usage\n"}
+    titled = {"lease-desk/README.md": "# Lease Office\n\nIntro.\n\n# Usage\n"}
+    files = [_file("lease-desk/shop/Dockerfile"), _file("lease-desk/shop/App.java", "java")]
+
+    assert _repo_units("lease-desk", files, documents=sections)["lease-desk/shop"].product == "Lease Desk"  # the repository name
+    assert _repo_units("lease-desk", files, documents=titled)["lease-desk/shop"].product == "Lease Office"  # the title
+    assert _named(_container("shop"), documents={"r/README.md": "# Shop Platform\n\n## Usage\n"})["r/shop"].product == "Shop Platform"
+
+
+def test_a_csproj_names_its_unit_by_its_assembly_name_or_its_file_name():
+    files = [_file("r/ledger/src/Dockerfile"), _file("r/ledger/src/Program.cs", "csharp"), _file("r/ledger/src/ledger-store.csproj")]
+    files += [_file("r/audit/Dockerfile"), _file("r/audit/Program.cs", "csharp"), _file("r/audit/Audit.csproj")]
+    manifests = {
+        "r/ledger/src/ledger-store.csproj": '<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><OutputType>Exe</OutputType></PropertyGroup></Project>',
+        "r/audit/Audit.csproj": '<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><AssemblyName>Audit.Trail</AssemblyName></PropertyGroup></Project>',
+    }
+    rules = UnitRules(code_subtypes=frozenset({"csharp"}), generic_words=NAMING.generic_words)
+
+    units = _repo_units("r", files, rules=rules, manifests=manifests)
+
+    assert units["r/ledger/src"].name_candidates[0] == ("Ledger Store", "manifest")  # not "Src", the folder
+    assert units["r/audit"].name_candidates[0] == ("Audit Trail", "manifest")
+
+
+def test_a_readme_title_written_as_one_lowercase_identifier_is_cased_like_a_folder_name():
+    documents = {"r/README.md": "# Shop\n", "r/ledger/README.md": "# ledgerservice\n"}
+
+    units = _named(_container("ledger"), rules=SPLIT, documents=documents)
+
+    assert units["r/ledger"].name_candidates[0] == ("Ledger Service", "readme")
+
+
+def test_a_lowercase_folder_name_is_split_before_a_configured_suffix_when_three_letters_stay_in_front():
+    units = _named([*_container("ledgerservice"), *_container("adservice"), *_container("audit-server")], rules=SPLIT)
+
+    assert units["r/ledgerservice"].name_candidates == [("Ledger Service", "structure")]
+    assert units["r/adservice"].name_candidates == [("Adservice", "structure")]  # two letters in front: no split
+    assert units["r/audit-server"].name_candidates == [("Audit Server", "structure")]
+    assert _named(_container("ledgerservice"))["r/ledgerservice"].name_candidates == [("Ledgerservice", "structure")]  # none configured
+
+
+def test_the_root_unit_takes_no_section_heading_of_the_root_readme_as_its_title():
+    """The unit at the repository root reads the root README: a first heading that is no title for the product is none for
+    the unit either."""
+    documents = {"lease-desk/README.md": "# Status\n\nStable.\n\n# Usage\n"}
+
+    units = _repo_units("lease-desk", [_file("lease-desk/App.java", "java")], documents=documents)
+
+    assert units["lease-desk"].readme_title is None
+    assert units["lease-desk"].name_candidates[0] == ("Lease Desk", "structure")
+
+
+def test_the_product_is_the_run_of_title_words_that_spells_the_repository_name():
+    """A title that describes the product around its name ("Acme LeaseDesk Reference Application") names it by that name;
+    a title without the repository's name stays whole."""
+    files = lambda repo: [_file(f"{repo}/shop/Dockerfile"), _file(f"{repo}/shop/App.java", "java")]  # noqa: E731
+
+    glued = _repo_units("leasedesk", files("leasedesk"), documents={"leasedesk/README.md": "# Acme LeaseDesk Reference Application\n"})
+    spaced = _repo_units("lease-desk", files("lease-desk"), documents={"lease-desk/README.md": "# Lease Desk Sample Application\n"})
+    other = _repo_units("lease-desk", files("lease-desk"), documents={"lease-desk/README.md": "# Rental Office Suite\n"})
+
+    assert glued["leasedesk/shop"].product == "LeaseDesk"
+    assert spaced["lease-desk/shop"].product == "Lease Desk"
+    assert other["lease-desk/shop"].product == "Rental Office Suite"
+
+
+def test_the_shipped_tooling_check_runs_at_temperature_zero():
+    """The tooling check drops a unit from the model, so the shipped step answers the same way every run."""
+    import json
+    from pathlib import Path
+
+    seed = Path(__file__).parents[3] / "deriva" / "adapters" / "database" / "data" / "extraction_config.json"
+    row = next(r for r in json.loads(seed.read_text(encoding="utf-8")) if r["node_type"] == "DeployableUnit" and r.get("is_active"))
+
+    assert json.loads(row["params"]).get("tool_check", {}).get("instruction") and row["temperature"] == 0.0
+
+
+def test_a_title_with_a_long_run_of_spaces_splits_in_linear_time():
+    """A one-line README can hold a very long run of spaces: the separator split takes it whole, once."""
+    import time
+
+    from deriva.modules.extraction.deployable_units import _SEPARATORS
+
+    started = time.perf_counter()
+    assert _SEPARATORS.split(" " * 200_000 + "Shop | Store: Admin") == [" " * 200_000 + "Shop", "Store", "Admin"]
+    assert time.perf_counter() - started < 1.0  # a plain \s+ took minutes here

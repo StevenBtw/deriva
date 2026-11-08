@@ -4,8 +4,25 @@ import { trace as traceApi } from "../api/client";
 import type { Trace } from "../api/types";
 import { CallLine } from "./LlmCalls";
 
+// A property longer than this (README lines, evidence lists) folds away under its name, so the source line stays readable
+const SHORT_VALUE = 80;
+
 function value(v: unknown): string {
+  // Graph metrics carry every digit of a float; four significant ones say as much here
+  if (typeof v === "number" && !Number.isInteger(v)) return String(Number(v.toPrecision(4)));
   return typeof v === "string" ? v : JSON.stringify(v);
+}
+
+function sizeOf(v: unknown): string {
+  if (Array.isArray(v)) return `${v.length} item${v.length === 1 ? "" : "s"}`;
+  if (typeof v === "string") return `${v.length} characters`;
+  return `${Object.keys(v ?? {}).length} keys`;
+}
+
+/** A long value unfolded: a list one item per line, an object as indented JSON, a text as it is. */
+function unfolded(v: unknown): string {
+  if (Array.isArray(v)) return v.map(value).join("\n");
+  return v !== null && typeof v === "object" ? JSON.stringify(v, null, 2) : value(v);
 }
 
 /** The trace of the element selected in the model: its sources, relationships and the run's calls about it. */
@@ -37,17 +54,27 @@ export function TracePanel({ elementId, runId }: { elementId: string | null; run
       </div>
       <div className="logline phase">Sources ({sources.length})</div>
       {!sources.length && <div className="logline muted">No source graph node recorded.</div>}
-      {sources.map((source) => (
-        <div key={source.id}>
-          <div className="logline">{[source.type ?? "?", source.name ?? "?", source.id].join(" · ")}</div>
-          <div className="logline faint">
-            {Object.entries(source.properties)
-              .filter(([k]) => k !== "id")
-              .map(([k, v]) => `${k}: ${value(v)}`)
-              .join(" · ")}
+      {sources.map((source) => {
+        const properties = Object.entries(source.properties).filter(([k]) => k !== "id");
+        const long = properties.filter(([, v]) => value(v).length > SHORT_VALUE);
+        return (
+          <div key={source.id}>
+            <div className="logline">{[source.type ?? "?", source.name ?? "?", source.id].join(" · ")}</div>
+            <div className="logline faint">
+              {properties
+                .filter(([, v]) => value(v).length <= SHORT_VALUE)
+                .map(([k, v]) => `${k}: ${value(v)}`)
+                .join(" · ")}
+            </div>
+            {long.map(([k, v]) => (
+              <details key={k} className="faint">
+                <summary className="logline">{`${k} (${sizeOf(v)})`}</summary>
+                <div className="logline">{unfolded(v)}</div>
+              </details>
+            ))}
           </div>
-        </div>
-      ))}
+        );
+      })}
       <div className="logline phase">Relationships ({relationships.length})</div>
       {relationships.map((r) => (
         <div key={r.identifier} className="logline">

@@ -143,7 +143,15 @@ def build_extraction_prompt(file_content: str, file_path: str, instruction: str,
     return prompt
 
 
-def build_type_definition_node(type_data: dict[str, Any], file_path: str, repo_name: str, file_content: str = "") -> dict[str, Any]:
+def code_snippet(source: str | list[str], start_line: int, end_line: int, max_line_chars: int | None = None) -> str:
+    """The source lines start_line to end_line (1-indexed), each cut to ``max_line_chars`` (None keeps them whole): a
+    one-line file would otherwise give every type it holds the whole file. ``source`` is the file's text or its lines,
+    split once for all the file's types."""
+    lines = (source.split("\n") if isinstance(source, str) else source)[start_line - 1 : end_line]
+    return "\n".join(lines if max_line_chars is None else (line[:max_line_chars] for line in lines))
+
+
+def build_type_definition_node(type_data: dict[str, Any], file_path: str, repo_name: str, file_content: str | list[str] = "", max_line_chars: int | None = None) -> dict[str, Any]:
     """
     Build a TypeDefinition graph node from extracted type data.
 
@@ -152,7 +160,8 @@ def build_type_definition_node(type_data: dict[str, Any], file_path: str, repo_n
             Expected keys: typeName, category, description, interfaceType, startLine, endLine, confidence
         file_path: Path to the file where the type was found
         repo_name: Repository name for node ID generation
-        file_content: Full content of the source file (used to extract code snippet)
+        file_content: The source file's text, or its lines split once for all its types (for the code snippet)
+        max_line_chars: The characters the snippet keeps of each line (None keeps them whole)
 
     Returns:
         Dictionary with:
@@ -211,12 +220,7 @@ def build_type_definition_node(type_data: dict[str, Any], file_path: str, repo_n
     end_line = type_data.get("endLine", 0)
 
     # Extract code snippet from file content using line numbers
-    code_snippet = ""
-    if file_content and start_line > 0 and end_line >= start_line:
-        lines = file_content.split("\n")
-        # Convert to 0-indexed and extract the range
-        snippet_lines = lines[start_line - 1 : end_line]
-        code_snippet = "\n".join(snippet_lines)
+    snippet = code_snippet(file_content, start_line, end_line, max_line_chars) if file_content and start_line > 0 and end_line >= start_line else ""
 
     # Generate unique node ID using :: separator to avoid repo name conflicts
     type_name_slug = type_data["typeName"].replace(" ", "_").replace("-", "_")
@@ -235,7 +239,7 @@ def build_type_definition_node(type_data: dict[str, Any], file_path: str, repo_n
             "filePath": file_path,
             "startLine": start_line,
             "endLine": end_line,
-            "codeSnippet": code_snippet,
+            "codeSnippet": snippet,
             "confidence": type_data.get("confidence", 0.8),
             "extracted_at": current_timestamp(),
         },
@@ -366,12 +370,14 @@ def extract_type_definitions(
         safe_path = original_path.replace("/", "_").replace("\\", "_")
         file_node_id = f"file::{repo_name}::{safe_path}"
 
+        lines = file_content.split("\n")  # once for all the file's types
         for type_data in parse_result["data"]:
             node_result = build_type_definition_node(
                 type_data=type_data,
                 file_path=file_path,
                 repo_name=repo_name,
-                file_content=file_content,
+                file_content=lines,
+                max_line_chars=config.get("max_snippet_line_chars"),
             )
 
             if node_result["success"]:
@@ -503,6 +509,7 @@ def extract_types_from_source(
     file_path: str,
     file_content: str,
     repo_name: str,
+    max_line_chars: int | None = None,
 ) -> dict[str, Any]:
     """
     Extract TypeDefinition nodes from source code using tree-sitter.
@@ -531,8 +538,9 @@ def extract_types_from_source(
         safe_path = original_path.replace("/", "_").replace("\\", "_")
         file_node_id = f"file::{repo_name}::{safe_path}"
 
+        lines = file_content.split("\n")  # once for all the file's types
         for ext_type in extracted_types:
-            node_data = _build_type_node_from_treesitter(ext_type, file_path, file_content, repo_name)
+            node_data = _build_type_node_from_treesitter(ext_type, file_path, lines, repo_name, max_line_chars)
             nodes.append(node_data)
 
             # Create CONTAINS edge: File -> TypeDefinition
@@ -606,13 +614,15 @@ def extract_types_from_source(
 def _build_type_node_from_treesitter(
     ext_type: ExtractedType,
     file_path: str,
-    file_content: str,
+    file_content: str | list[str],
     repo_name: str,
+    max_line_chars: int | None = None,
 ) -> dict[str, Any]:
     """Build a TypeDefinition node from AST extracted type."""
     # Map AST kind to extraction category
     category_map = {
         "class": "class",
+        "interface": "interface",
         "function": "function",
         "type_alias": "alias",
         # Structural sources (mainframe): the kind is the category
@@ -626,9 +636,7 @@ def _build_type_node_from_treesitter(
     }
     category = category_map.get(ext_type.kind, "other")
 
-    # Extract code snippet
-    lines = file_content.split("\n")
-    code_snippet = "\n".join(lines[ext_type.line_start - 1 : ext_type.line_end])
+    snippet = code_snippet(file_content, ext_type.line_start, ext_type.line_end, max_line_chars)
 
     # Generate node ID using :: separator to avoid repo name conflicts
     type_name_slug = ext_type.name.replace(" ", "_").replace("-", "_")
@@ -646,7 +654,7 @@ def _build_type_node_from_treesitter(
             "filePath": file_path,
             "startLine": ext_type.line_start,
             "endLine": ext_type.line_end,
-            "codeSnippet": code_snippet,
+            "codeSnippet": snippet,
             "confidence": 1.0,  # AST is deterministic
             "extracted_at": current_timestamp(),
             "extraction_method": "treesitter",

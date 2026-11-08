@@ -59,3 +59,19 @@ def test_switching_is_refused_while_a_run_is_in_progress(make_client):
     while run.status == "running" and time.time() < deadline:
         time.sleep(0.02)
     assert run.status != "running"
+
+
+def test_switching_to_a_repository_whose_graph_is_held_says_so(make_client):
+    """Another process holds that repository's graph: 503 with the reason, and the studio stays on its repository."""
+    from deriva.services import GraphDatabaseBusy
+
+    def held(repository):
+        raise GraphDatabaseBusy("H:/w/graphs/repo-b.grafeo")
+
+    session = FakeSession(get_repositories=[{"name": "repo-b"}], use_repository=held)
+    client = make_client(session)
+
+    response = client.put("/api/session/repository", json={"repository": "repo-b"})
+
+    assert response.status_code == 503
+    assert "repo-b.grafeo is open in another Deriva process" in response.json()["detail"]

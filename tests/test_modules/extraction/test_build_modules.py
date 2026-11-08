@@ -4,7 +4,18 @@ dropped from the front."""
 
 from __future__ import annotations
 
-from deriva.modules.extraction.build_modules import ModuleRules, behaviour_per_file, declares_entry, detect_modules, feature_areas, module_id, usage_role
+from deriva.modules.extraction.build_modules import (
+    BuildModule,
+    ModuleRules,
+    behaviour_per_file,
+    csproj_entry,
+    declares_entry,
+    detect_modules,
+    feature_areas,
+    library_repository,
+    module_id,
+    usage_role,
+)
 
 RULES = ModuleRules(
     manifests=("pom.xml", "package.json", "pyproject.toml", "build.gradle", "build.gradle.kts", "settings.gradle"), code_subtypes=frozenset({"java", "python", "javascript"})
@@ -348,6 +359,93 @@ def test_a_module_no_unit_builds_is_a_component_by_who_uses_it():
     assert usage_role(users=0, behaviour=4.0, entry=False, min_behaviour=1) == "no entry point"
 
 
+def _excluded_reasons(repository, folders, words=("test", "tests", "example", "examples")):
+    files = [{"path": f"{folder}/pyproject.toml", "name": "pyproject.toml", "file_type": "build", "subtype": "toml"} for folder in folders]
+    files += [{"path": f"{folder}/code.py", "name": "code.py", "file_type": "source", "subtype": "python"} for folder in folders]
+    manifests = {f"{folder}/pyproject.toml": f'[project]\nname = "{folder.rsplit("/", 1)[-1].rsplit(".", 1)[-1]}"\n' for folder in folders}
+    rules = ModuleRules(manifests=("pyproject.toml",), code_subtypes=frozenset({"python"}), test_words=words)
+    return {m.path: m.excluded for m in detect_modules(repository, files, manifests, rules)}
+
+
+def test_test_words_read_a_modules_own_folder_and_only_exact_folders_above_it():
+    found = _excluded_reasons(
+        "shop",
+        [
+            "shop/examples/demo",  # a folder above is a test word
+            "shop/tests/fixtures/app",
+            "shop/com.example.orders",  # a dotted folder is named by its last part
+            "shop/org.example.shop.web",
+            "shop/services/ab-test-service/backend",  # a word inside a folder above is no test folder
+            "shop/test-helpers",  # its own folder's words count, as before
+        ],
+    )
+
+    assert found == {
+        "shop/examples/demo": "test-only",
+        "shop/tests/fixtures/app": "test-only",
+        "shop/com.example.orders": None,
+        "shop/org.example.shop.web": None,
+        "shop/services/ab-test-service/backend": None,
+        "shop/test-helpers": "test-only",
+    }
+
+
+def test_the_repositories_own_name_is_no_test_word():
+    assert _excluded_reasons("load-testing", ["load-testing"], words=("testing",)) == {"load-testing": None}
+    assert _excluded_reasons("example-voting-app", ["example-voting-app/worker"]) == {"example-voting-app/worker": None}
+
+
+def test_a_repository_name_in_front_of_a_modules_name_is_no_test_word():
+    files = [{"path": f"example-shop/{m}/pom.xml", "name": "pom.xml", "file_type": "build", "subtype": "xml"} for m in ("orders", "test")]
+    files += [{"path": f"example-shop/{m}/A.java", "name": "A.java", "file_type": "source", "subtype": "java"} for m in ("orders", "test")]
+    pom = "<project><artifactId>{}</artifactId></project>"
+    manifests: dict[str, str] = {"example-shop/orders/pom.xml": pom.format("example-shop-orders"), "example-shop/test/pom.xml": pom.format("example-shop-test")}
+    rules = ModuleRules(manifests=("pom.xml",), code_subtypes=frozenset({"java"}), test_words=("test", "example"))
+
+    excluded = {m.path: m.excluded for m in detect_modules("example-shop", files, manifests, rules)}
+
+    assert excluded["example-shop/orders"] is None
+    # What follows the repository's name still counts
+    assert excluded["example-shop/test"] == "test-only"
+
+
+def test_the_repository_name_in_a_modules_name_counts_after_a_scope_and_as_shared_leading_words():
+    def excluded(repository, artifact):
+        files = [{"path": f"{repository}/orders/pom.xml", "name": "pom.xml", "file_type": "build", "subtype": "xml"}]
+        files += [{"path": f"{repository}/orders/A.java", "name": "A.java", "file_type": "source", "subtype": "java"}]
+        manifests: dict[str, str] = {f"{repository}/orders/pom.xml": f"<project><artifactId>{artifact}</artifactId></project>"}
+        rules = ModuleRules(manifests=("pom.xml",), code_subtypes=frozenset({"java"}), test_words=("test", "example"))
+        return {m.path: m.excluded for m in detect_modules(repository, files, manifests, rules)}[f"{repository}/orders"]
+
+    assert excluded("example-scoped", "@acme/example-scoped-orders") is None
+    assert excluded("acme.example-dotted", "acme.example-dotted.orders") is None
+    assert excluded("example-voting-app", "example-vote-worker") is None
+    # A word of its own still counts, and a name that is only the shared word is not emptied
+    assert excluded("example-shop", "example-shop-test") == "test-only"
+    assert excluded("shop", "example") == "test-only"
+    assert excluded("example-shop", "example") == "test-only"
+    # A test word in front of the repository's name counts; a scope in front of it is the publisher, not the module
+    assert excluded("shop", "test-shop-helper") == "test-only"
+    assert excluded("shop", "@example/shop-orders") is None
+    assert excluded("shop", "example:shop-orders") is None
+
+
+def test_a_library_repositories_own_module_is_its_component_when_nothing_else_is():
+    root = BuildModule(path="lib", name="Lib", manifest="lib/pyproject.toml", module=True, excluded="no entry point")
+    sample = BuildModule(path="lib/examples/a", name="A", manifest="lib/examples/a/pyproject.toml", module=True, excluded="test-only")
+
+    # The only unit lies in an example: the repository's own module takes the role
+    assert library_repository([root, sample], ["lib/examples/a"]) is root
+    assert library_repository([root], []) is root
+    # A unit of the system itself, or another component, leaves it out
+    assert library_repository([root, sample], ["lib/server"]) is None
+    assert library_repository([root, BuildModule(path="lib/app", name="App", manifest="m", module=True)], []) is None
+    # Other reasons are decisions about use, and two at one depth say nothing
+    assert library_repository([BuildModule(path="lib", name="Lib", manifest="m", module=True, excluded="part of one unit")], []) is None
+    one, two = (BuildModule(path=f"r/{n}", name=n, manifest="m", module=True, excluded="no entry point") for n in "ab")
+    assert library_repository([one, two], []) is None
+
+
 def test_a_manifest_declares_an_entry_point_by_its_ecosystems_convention():
     assert declares_entry("r/c/package.json", '{"name": "client", "main": "index.js"}')
     assert declares_entry("r/c/package.json", '{"name": "tool", "bin": {"tool": "cli.js"}}')
@@ -386,3 +484,101 @@ def test_layered_packages_and_a_single_feature_are_no_split():
 
     assert feature_areas(layered, {f"{base}/rest/OrderResource.java", f"{base}/servlet/IndexServlet.java"}, {f"{base}/domain/Order.java"}) == []
     assert feature_areas(single, {f"{base}/order/OrderController.java"}, {f"{base}/order/Order.java"}) == []
+
+
+CSPROJ_RULES = ModuleRules(manifests=("*.csproj",), code_subtypes=frozenset({"csharp"}), test_words=("tests",))
+
+
+def _projects(*folders: str) -> list[dict]:
+    files: list[dict] = []
+    for folder in folders:
+        files += [_f(f"{folder}/{folder.rsplit('/', 1)[-1]}.csproj", "csproj", "unknown"), _f(f"{folder}/Thing.cs", "csharp")]
+    return files
+
+
+def test_folders_with_the_same_project_layout_are_one_module_each():
+    files = _projects("r/mods/Orders/Application", "r/mods/Orders/Domain", "r/mods/Bills/Application", "r/mods/Bills/Domain", "r/mods/Bills/Tests/Unit", "r/Core")
+
+    modules = _by_path(detect_modules("r", files, {}, CSPROJ_RULES))
+
+    assert sorted(p for p, m in modules.items() if m.excluded is None) == ["r/Core", "r/mods/Bills", "r/mods/Orders"]
+    assert modules["r/mods/Orders"].grouped and not modules["r/Core"].grouped
+    assert (modules["r/mods/Orders"].module, modules["r/mods/Orders"].name, modules["r/mods/Orders"].manifest) == (True, "Orders", "")
+    assert "r/mods/Orders/Domain/Thing.cs" in modules["r/mods/Orders"].files
+    assert modules["r/mods/Bills/Tests/Unit"].excluded == "test-only"  # stays apart from its group
+
+
+def test_an_aggregator_listing_grouped_projects_stays_a_system_over_their_groups():
+    folders = ("r/mods/Orders/Application", "r/mods/Orders/Domain", "r/mods/Bills/Application", "r/mods/Bills/Domain")
+    files = [f for folder in folders for f in (_f(f"{folder}/pom.xml", "maven", "build"), _f(f"{folder}/Thing.java"))] + [_f("r/pom.xml", "maven", "build")]
+    listing = "".join(f"<module>{folder.removeprefix('r/')}</module>" for folder in folders)
+    manifests = {"r/pom.xml": f"<project><artifactId>shop</artifactId><packaging>pom</packaging><modules>{listing}</modules></project>"}
+    manifests |= {f"{folder}/pom.xml": f"<project><artifactId>{folder.rsplit('/', 2)[-2].lower()}-{folder.rsplit('/', 1)[-1].lower()}</artifactId></project>" for folder in folders}
+
+    modules = _by_path(detect_modules("r", files, manifests, RULES))
+
+    assert modules["r/mods/Orders"].grouped and modules["r/mods/Bills"].grouped
+    assert modules["r"].system and sorted(modules["r"].members) == ["r/mods/Bills", "r/mods/Orders"]
+
+
+def test_a_layout_only_one_folder_has_groups_nothing():
+    files = _projects("r/mods/Orders/Application", "r/mods/Orders/Domain", "r/mods/Bills/Web", "r/mods/Bills/Worker")
+
+    modules = _by_path(detect_modules("r", files, {}, CSPROJ_RULES))
+
+    assert sorted(modules) == ["r/mods/Bills/Web", "r/mods/Bills/Worker", "r/mods/Orders/Application", "r/mods/Orders/Domain"]
+    assert not any(m.grouped for m in modules.values())
+
+
+def test_folders_sharing_one_project_name_are_no_layout():
+    files = _projects("r/mods/Orders/Application", "r/mods/Orders/Domain", "r/mods/Bills/Application", "r/mods/Bills/Worker")
+
+    assert not any(m.grouped for m in detect_modules("r", files, {}, CSPROJ_RULES))
+
+
+def test_a_folder_with_its_own_manifest_is_no_layout_group():
+    files = [*_projects("r/a/x", "r/a/y", "r/b/x", "r/b/y"), _f("r/a/a.csproj", "csproj", "unknown"), _f("r/b/b.csproj", "csproj", "unknown")]
+
+    assert not any(m.grouped for m in detect_modules("r", files, {}, CSPROJ_RULES))
+
+
+def test_a_csproj_declares_an_entry_by_its_sdk_or_its_output():
+    assert declares_entry("r/a/A.csproj", '<Project Sdk="Microsoft.NET.Sdk.Web"></Project>')
+    assert declares_entry("r/a/A.csproj", '﻿<Project Sdk="Microsoft.NET.Sdk.Worker"></Project>')
+    assert declares_entry("r/a/A.csproj", '<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><OutputType>Exe</OutputType></PropertyGroup></Project>')
+    assert declares_entry("r/a/A.csproj", "<Project><PropertyGroup><OutputType> WinExe </OutputType></PropertyGroup></Project>")
+    assert not declares_entry("r/a/A.csproj", '<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><OutputType>Library</OutputType></PropertyGroup></Project>')
+    assert not declares_entry("r/a/A.csproj", '<Project Sdk="Microsoft.NET.Sdk" />')
+
+
+def test_a_classic_csproj_is_a_web_program_by_its_web_project_type():
+    """A .NET Framework web application builds a library its web server loads: the web application or web site project
+    type says it is a program."""
+    project = "<Project><PropertyGroup><ProjectTypeGuids>{}</ProjectTypeGuids><OutputType>Library</OutputType></PropertyGroup></Project>".format
+
+    assert csproj_entry(project("{E3E379DF-F4C6-4180-9B81-6769533ABE47};{349C5851-65DF-11DA-9384-00065B846F21}")) == "web"
+    assert csproj_entry(project("{e24c65dc-7377-472b-9aba-bc803b73c61a}")) == "web"
+    assert csproj_entry(project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}")) is None
+
+
+def _grouped_aggregator(listed: tuple[str, ...]) -> dict:
+    folders = ("r/mods/Orders/Application", "r/mods/Orders/Domain", "r/mods/Bills/Application", "r/mods/Bills/Domain")
+    files = [f for folder in folders for f in (_f(f"{folder}/pom.xml", "maven", "build"), _f(f"{folder}/Thing.java"))] + [_f("r/pom.xml", "maven", "build")]
+    listing = "".join(f"<module>{folder.removeprefix('r/')}</module>" for folder in listed)
+    manifests = {"r/pom.xml": f"<project><artifactId>shop</artifactId><packaging>pom</packaging><modules>{listing}</modules></project>"}
+    manifests |= {f"{folder}/pom.xml": f"<project><artifactId>{folder.rsplit('/', 2)[-2].lower()}-{folder.rsplit('/', 1)[-1].lower()}</artifactId></project>" for folder in folders}
+    return _by_path(detect_modules("r", files, manifests, RULES))
+
+
+def test_an_aggregator_listing_the_projects_of_one_group_only_is_no_system():
+    """Two listed projects that are one grouped module are one member: below min_members."""
+    modules = _grouped_aggregator(("r/mods/Orders/Application", "r/mods/Orders/Domain"))
+
+    assert modules["r/mods/Orders"].grouped
+    assert "r" not in modules or not modules["r"].system
+
+
+def test_an_aggregator_listing_one_project_of_each_of_two_groups_is_a_system():
+    modules = _grouped_aggregator(("r/mods/Orders/Application", "r/mods/Bills/Application"))
+
+    assert modules["r"].system and sorted(modules["r"].members) == ["r/mods/Bills", "r/mods/Orders"]

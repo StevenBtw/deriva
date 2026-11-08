@@ -6,15 +6,17 @@ import json
 import re
 from pathlib import Path
 from types import SimpleNamespace
+from typing import cast
 from unittest.mock import patch
 
 import pytest
 
 from deriva.adapters.grafeo.manager import close_database
 from deriva.adapters.graph import GraphManager
-from deriva.adapters.graph.models import FileNode, TechnologyNode
+from deriva.adapters.graph.models import ExternalDependencyNode, FileNode, TechnologyNode
 from deriva.modules.extraction.base import generate_file_node_id
 from deriva.services import extraction as service
+from deriva.services.config import ExtractionConfig
 
 PLATFORMS = [{"file_type": "dependency", "subtype": "javascript", "name": "Runtime Js", "category": "platform"}]
 PARAMS = {"confidence": 0.9, "missing_retries": 1, "platforms": PLATFORMS}
@@ -82,6 +84,35 @@ def _run(tmp_path, graph, llm, cfg=None, files=None):
 def _configures(graph):
     rows = graph.query("MATCH (t:Graph:Technology)<-[r]-(f:Graph) RETURN f.id AS src, t.id AS dst, type(r) AS rel")
     return sorted((row["src"], row["dst"], row["rel"]) for row in rows)
+
+
+class TestImportedLibraries:
+    def _graph_with_import(self, graph):
+        # The node stores its path with the repository in front ("r/app/db.py"); its id takes the path inside the repository
+        source = generate_file_node_id("r", "app/db.py")
+        graph.add_node(FileNode(name="db.py", path="app/db.py", repository_name="r", file_type="source", subtype="python"), node_id=source)
+        graph.add_node(ExternalDependencyNode(name="beta_client", dependency_category="library", repository_name="r"), node_id="dep::r::beta_client")
+        graph.batch_update_properties({"dep::r::beta_client": {"repository_name": "r"}})  # The extraction stamps it
+        graph.add_edge(source, "dep::r::beta_client", "USES")
+        return source
+
+    def test_a_repository_without_a_manifest_classifies_what_its_source_imports(self, tmp_path, graph):
+        source = self._graph_with_import(graph)
+        llm = FakeLlm({"beta_client": ("system_software", "Queue Beta")})
+
+        result = _run(tmp_path, graph, llm, cfg=_cfg({**PARAMS, "imported_libraries": True}), files={})
+
+        assert result["errors"] == []
+        assert llm.prompted_items(0) == ["beta_client"]
+        assert (source, "tech::r::queuebeta", "Graph:CONFIGURES") in _configures(graph)
+
+    def test_without_the_setting_imports_are_no_items(self, tmp_path, graph):
+        self._graph_with_import(graph)
+        llm = FakeLlm({"beta_client": ("system_software", "Queue Beta")})
+
+        result = _run(tmp_path, graph, llm, files={})
+
+        assert llm.calls == [] and result["nodes_created"] == 0
 
 
 class TestTechnologyStep:
@@ -175,6 +206,27 @@ class TestTechnologyStep:
         # The "app" service runs the repository's own app module (a directory holding a dependency file)
         assert sorted(llm.prompted_items(0)) == ["alpha-client", "beta-lib", "store"]
 
+    def test_the_image_labels_are_kept_on_the_repository_for_the_deployments(self, tmp_path, graph):
+        """Each labelled image with the system its label names ("" for none) is written on the repository node."""
+        from datetime import datetime
+
+        from deriva.adapters.graph.models import RepositoryNode
+
+        graph.add_node(RepositoryNode(name="r", url="", created_at=datetime(2026, 1, 1)), node_id="repo::r")
+        compose = "services:\n  cache:\n    image: acme/keyvalue:2\n  admin:\n    image: acme/dbadmin:1\n"
+        path = "deploy/docker-compose.yml"
+        (tmp_path / path).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / path).write_text(compose, encoding="utf-8")
+        graph.add_node(FileNode(name="docker-compose.yml", path=path, repository_name="r", file_type="infra", subtype="docker-compose"), node_id=generate_file_node_id("r", path))
+        cfg = _cfg()
+        cfg.input_sources = json.dumps({"files": [{"type": "infra", "subtype": "*"}], "nodes": []})
+        llm = FakeLlm({"cache": ("system_software", "Key Value Store")})
+
+        service._extract_technologies(cfg, SimpleNamespace(name="r"), tmp_path, [{"path": path, "file_type": "infra", "subtype": "docker-compose"}], graph, llm)
+
+        (row,) = graph.query("MATCH (r:Graph:Repository) RETURN r.imageLabels AS labels")
+        assert row["labels"] == ["acme/dbadmin=", "acme/keyvalue=Key Value Store"]
+
     @pytest.mark.parametrize("skip, prompted", [(True, ["beta-lib"]), (False, ["alpha-client", "beta-lib"])])
     def test_items_named_after_the_repository_are_skipped_when_configured(self, tmp_path, graph, skip, prompted):
         (tmp_path / "app").mkdir()
@@ -216,10 +268,10 @@ class TestTechnologyStep:
 
 
 def test_the_step_runs_the_structure_flow(tmp_path):
-    cfg = SimpleNamespace(node_type="Technology", extraction_method="llm")
+    cfg = cast(ExtractionConfig, SimpleNamespace(node_type="Technology", extraction_method="llm"))
 
     with patch.object(service, "_extract_technologies", return_value={"nodes_created": 2, "edges_created": 0, "errors": []}) as step:
-        result = service._run_extraction_step(cfg, SimpleNamespace(name="r"), tmp_path, [], [], None, lambda *a, **k: None, None)
+        result = service._run_extraction_step(cfg, SimpleNamespace(name="r"), tmp_path, [], [], None, lambda *a, **k: None, None)  # ty: ignore[invalid-argument-type]: the step takes no graph (its None branch)
 
     assert result["nodes_created"] == 2
     step.assert_called_once()

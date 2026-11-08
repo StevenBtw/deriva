@@ -97,7 +97,7 @@ def test_retyping_keeps_attributes_written_on_the_edge(am):
     am.add_element(Element(name="Service", element_type="ApplicationService", identifier="as_1"))
     am.add_element(Element(name="Data", element_type="DataObject", identifier="do_1"))
     am.add_relationship(Relationship(source="as_1", target="do_1", relationship_type="Flow", identifier="rel_1"), validate=False)
-    am.query("MATCH ()-[r]->() WHERE r.identifier = 'rel_1' SET r.confidence = 0.77, r.consolidated = true")
+    am.query("MATCH ()-[r]->() WHERE r.identifier = 'rel_1' SET r.confidence = $c, r.consolidated = true", {"c": 0.77})
 
     am.retype_relationship("rel_1", "Access")
 
@@ -108,7 +108,7 @@ def test_retyping_leaves_other_namespaces_alone(am):
     am.add_element(Element(name="Service", element_type="ApplicationService", identifier="as_1"))
     am.add_element(Element(name="Data", element_type="DataObject", identifier="do_1"))
     am.add_relationship(Relationship(source="as_1", target="do_1", relationship_type="Flow", identifier="rel_1"), validate=False)
-    am.query("MATCH ()-[r]->() WHERE r.identifier = 'rel_1' SET r.confidence = 0.77")
+    am.query("MATCH ()-[r]->() WHERE r.identifier = 'rel_1' SET r.confidence = $c", {"c": 0.77})
     # An edge with the same identifier in another namespace of the same database
     am.query("CREATE (:Other {id: 'a'})-[:LINKS {identifier: 'rel_1', weight: 5}]->(:Other {id: 'b'})")
 

@@ -843,6 +843,15 @@ class CSharpExtractor(LanguageExtractor):
 
         module = self.get_node_text(name_node, source) if name_node else ""
 
+        # An alias using (``using Alias = A.B;``): the name field is the alias, the target follows the "="
+        texts = [self.get_node_text(child, source) for child in node.children]
+        if "=" in texts:
+            after = node.children[texts.index("=") + 1 :]
+            # Any type can be aliased (A.B, List<int>, int[], int*, Foo?, (int, string), int): the first named node after "="
+            target = next((c for c in after if c.is_named and c.type != "comment"), None)
+            if target is not None:
+                alias, module = module, self.get_node_text(target, source)
+
         # Check for static using
         is_static = any(self.get_node_text(child, source) == "static" for child in node.children)
 

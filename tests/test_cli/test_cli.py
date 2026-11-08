@@ -15,9 +15,6 @@ from deriva.cli.commands.run import (
     _print_extraction_result,
     _print_pipeline_result,
 )
-from deriva.cli.commands.run import (
-    app as run_app,
-)
 
 runner = CliRunner()
 
@@ -78,7 +75,7 @@ class TestPrintExtractionResult:
 
         assert "EXTRACTION RESULTS" in output
         assert "Repos processed:  2" in output
-        assert "Nodes created:    100" in output
+        assert "Nodes written:    100" in output
 
     def test_prints_errors(self, capsys):
         """Should print errors when present."""
@@ -191,17 +188,18 @@ class TestPrintPipelineResult:
     def test_prints_pipeline_summary(self, capsys):
         """Should print pipeline summary."""
         result = {
+            "success": True,
             "results": {
                 "extraction": {"stats": {"nodes_created": 50}},
                 "derivation": {"stats": {"elements_created": 10, "issues_found": 1}},
-            }
+            },
         }
         _print_pipeline_result(result)
         output = capsys.readouterr().out
 
         assert "PIPELINE COMPLETE" in output
         assert "Extraction:" in output
-        assert "Nodes created: 50" in output
+        assert "Nodes written: 50" in output
         assert "Derivation:" in output
         assert "Elements created: 10" in output
 
@@ -265,6 +263,15 @@ class TestMain:
         with patch("deriva.cli.cli.app", side_effect=ConfigDatabaseBusy("The config database x is open in another Deriva process")):
             assert main() == 1
         assert capsys.readouterr().err.strip() == "Error: The config database x is open in another Deriva process"
+
+    def test_main_names_a_busy_graph_database_in_one_line(self, capsys):
+        """Another process holds the repository's graph file: one line saying so, not a traceback."""
+        from deriva.services import GraphDatabaseBusy
+
+        with patch("deriva.cli.cli.app", side_effect=GraphDatabaseBusy("H:/w/graphs/repo-b.grafeo")):
+            assert main() == 1
+        err = capsys.readouterr().err.strip()
+        assert err.startswith("Error: The graph database H:/w/graphs/repo-b.grafeo is open in another Deriva process") and "\n" not in err
 
     def test_main_names_an_unknown_repository_in_one_line(self, capsys):
         from deriva.services import UnknownRepository
@@ -431,7 +438,19 @@ class TestCoverageCommand:
     REPORT = {
         "files": 4,
         "in_graph": 3,
-        "extensions": [{"extension": ".java", "files": 3, "in_graph": 3, "file_type": "source", "subtype": "java", "reader": "parser", "with_symbols": 0, "unreadable": 1}],
+        "extensions": [
+            {
+                "extension": ".java",
+                "files": 3,
+                "in_graph": 3,
+                "file_type": "source",
+                "file_types": [{"file_type": "source", "files": 3}],
+                "subtype": "java",
+                "reader": "parser",
+                "with_symbols": 0,
+                "unreadable": 1,
+            }
+        ],
         "missing": ["gone.xsd"],
         "unreadable": [{"path": "deep/A.java", "reason": "path over 260 characters: [WinError 3]"}],
         "nodes": {"File": 3},
@@ -454,6 +473,32 @@ class TestCoverageCommand:
         assert "Incomplete" in result.stdout and "1 file is not in the graph (gone.xsd)" in result.stdout
         assert "1 source file is read by no extraction step: .kt (1)" in result.stdout
         assert ".java" in result.stdout and "deep/A.java: path over 260 characters" in result.stdout
+
+    @patch("deriva.cli.cli.PipelineSession")
+    def test_coverage_names_each_extension_s_file_types_and_a_parser_only_for_code(self, mock_session_class):
+        """As in the studio: "Code read by" names the type and method steps' reader (parser or llm); an extension with source files and no
+        reader says none, even when its tests outnumber them; documentation has no parser to name. The last column
+        names every file type with its files when there are several."""
+
+        def row(extension, types, reader=None):
+            files = sum(n for _, n in types)
+            file_types = [{"file_type": t, "files": n} for t, n in types]
+            counts = {"files": files, "in_graph": files, "with_symbols": 0, "unreadable": 0}
+            return {"extension": extension, **counts, "file_type": types[0][0], "file_types": file_types, "subtype": "", "reader": reader}
+
+        rows = [row(".java", [("source", 3)], "parser"), row(".cbl", [("source", 2)], "llm"), row(".md", [("docs", 2)]), row(".py", [("test", 3), ("source", 2)])]
+        mock_session = MagicMock()
+        mock_session.extraction_coverage.return_value = {**self.REPORT, "extensions": rows}
+        mock_session_class.return_value.__enter__.return_value = mock_session
+
+        result = runner.invoke(app, ["coverage", "--repo", "x"])
+
+        lines = {line.split()[0]: line.split() for line in result.stdout.splitlines() if line.strip().startswith((".", "Extension"))}
+        assert lines["Extension"] == ["Extension", "Files", "In", "graph", "Code", "read", "by", "Symbols", "Unreadable", "File", "type"]
+        assert lines[".cbl"] == [".cbl", "2", "2", "llm", "0", "0", "source"]
+        assert lines[".java"] == [".java", "3", "3", "parser", "0", "0", "source"]
+        assert lines[".md"] == [".md", "2", "2", "0", "0", "docs"]
+        assert lines[".py"] == [".py", "5", "5", "none", "0", "0", "test", "3,", "source", "2"]
 
     @patch("deriva.cli.cli.PipelineSession")
     def test_coverage_as_json_has_the_full_lists(self, mock_session_class):
@@ -1303,6 +1348,31 @@ class TestRunCommandDerivationSuccess:
 
 class TestRunCommandAllStage:
     """Tests for run command with 'all' stage."""
+
+    @patch("deriva.cli.cli.create_progress_reporter")
+    @patch("deriva.cli.cli.PipelineSession")
+    def test_a_failed_pipeline_says_so(self, mock_session_class, mock_progress):
+        mock_session = MagicMock()
+        mock_session.run_pipeline.return_value = {"success": False, "results": {}, "errors": ["step failed"]}
+        mock_session_class.return_value.__enter__.return_value = mock_session
+
+        result = runner.invoke(app, ["run", "all"])
+
+        assert result.exit_code == 1
+        assert "PIPELINE FAILED" in result.stdout and "PIPELINE COMPLETE" not in result.stdout
+
+    @patch("deriva.cli.cli.create_progress_reporter")
+    @patch("deriva.cli.cli.PipelineSession")
+    def test_the_summary_ends_with_the_distinct_graph_nodes(self, mock_session_class, mock_progress):
+        """The summary counts node writes; the distinct count follows, as status counts it."""
+        mock_session = MagicMock()
+        mock_session.run_pipeline.return_value = {"success": True, "results": {"extraction": {"stats": {"nodes_created": 12}}}}
+        mock_session.get_graph_stats.return_value = {"total_nodes": 10}
+        mock_session_class.return_value.__enter__.return_value = mock_session
+
+        result = runner.invoke(app, ["run", "all"])
+
+        assert "Nodes written: 12" in result.stdout and "Graph nodes:   10" in result.stdout
 
     @patch("deriva.cli.cli.create_progress_reporter")
     @patch("deriva.cli.cli.PipelineSession")
@@ -2220,6 +2290,19 @@ class TestRepoCloneOptions:
         assert call_kwargs["branch"] == "develop"
 
     @patch("deriva.cli.commands.repo.PipelineSession")
+    def test_clone_allows_local_urls_and_skips_submodules_on_request(self, mock_session_class):
+        """The command line may clone a local repository (the studio may not); --no-submodules skips them."""
+        mock_session = MagicMock()
+        mock_session.clone_repository.return_value = {"success": True, "name": "repo", "path": "p", "url": "file:///srv/repo.git"}
+        mock_session_class.return_value.__enter__.return_value = mock_session
+
+        assert runner.invoke(app, ["repo", "clone", "file:///srv/repo.git"]).exit_code == 0
+        kwargs = mock_session.clone_repository.call_args[1]
+        assert kwargs["allow_local"] is True and kwargs["submodules"] is True
+        assert runner.invoke(app, ["repo", "clone", "file:///srv/repo.git", "--no-submodules"]).exit_code == 0
+        assert mock_session.clone_repository.call_args[1]["submodules"] is False
+
+    @patch("deriva.cli.commands.repo.PipelineSession")
     def test_clone_with_overwrite(self, mock_session_class):
         """Should pass overwrite option."""
         mock_session = MagicMock()
@@ -2574,7 +2657,7 @@ class TestPrintPipelineResultExtended:
 
         captured = capsys.readouterr()
         assert "Extraction:" in captured.out
-        assert "Nodes created: 250" in captured.out
+        assert "Nodes written: 250" in captured.out
 
     def test_prints_derivation_results(self, capsys):
         """Should print derivation results."""
@@ -2624,431 +2707,6 @@ class TestPrintPipelineResultExtended:
         assert "Total errors: 1" in captured.out
 
 
-# =============================================================================
-# Tests for run.py run_stage function (direct invocation of run.app)
-# =============================================================================
-
-
-class TestRunAppInvalidStage:
-    """Tests for run.py app with invalid stage."""
-
-    def test_invalid_stage_errors(self):
-        """Should reject invalid stage."""
-        result = runner.invoke(run_app, ["invalid"])
-        assert result.exit_code == 1
-        assert "Error: stage must be" in result.output
-
-
-class TestRunAppInvalidPhases:
-    """Tests for run.py app with invalid phases."""
-
-    def test_invalid_extraction_phase(self):
-        """Should reject invalid phase for extraction."""
-        # Options must come before positional args with typer callback
-        result = runner.invoke(run_app, ["--phase", "generate", "extraction"])
-        assert result.exit_code == 1
-        assert "not valid for extraction" in result.output
-        assert "classify, parse" in result.output
-
-    def test_invalid_derivation_phase(self):
-        """Should reject invalid phase for derivation."""
-        # Options must come before positional args with typer callback
-        result = runner.invoke(run_app, ["--phase", "classify", "derivation"])
-        assert result.exit_code == 1
-        assert "not valid for derivation" in result.output
-        assert "generate, prep, refine" in result.output
-
-
-class TestRunAppExtraction:
-    """Tests for run.py app extraction stage."""
-
-    @patch("deriva.cli.commands.run.create_progress_reporter")
-    @patch("deriva.cli.commands.run.PipelineSession")
-    def test_extraction_success(self, mock_session_class, mock_progress):
-        """Should run extraction successfully."""
-        mock_session = MagicMock()
-        mock_session.llm_info = {"provider": "openai", "model": "gpt-4"}
-        mock_session.run_extraction.return_value = {
-            "success": True,
-            "stats": {"nodes_created": 100, "edges_created": 50},
-        }
-        mock_session_class.return_value.__enter__.return_value = mock_session
-
-        mock_reporter = MagicMock()
-        mock_progress.return_value = mock_reporter
-        mock_reporter.__enter__ = MagicMock(return_value=mock_reporter)
-        mock_reporter.__exit__ = MagicMock(return_value=False)
-
-        result = runner.invoke(run_app, ["extraction"])
-
-        assert result.exit_code == 0
-        assert "EXTRACTION" in result.stdout
-        assert "Connected to grafeo" in result.stdout
-        mock_session.run_extraction.assert_called_once()
-
-    @patch("deriva.cli.commands.run.create_progress_reporter")
-    @patch("deriva.cli.commands.run.PipelineSession")
-    def test_extraction_with_repo(self, mock_session_class, mock_progress):
-        """Should run extraction with repo specified."""
-        mock_session = MagicMock()
-        mock_session.llm_info = {"provider": "openai", "model": "gpt-4"}
-        mock_session.run_extraction.return_value = {
-            "success": True,
-            "stats": {"nodes_created": 100},
-        }
-        mock_session_class.return_value.__enter__.return_value = mock_session
-
-        mock_reporter = MagicMock()
-        mock_progress.return_value = mock_reporter
-        mock_reporter.__enter__ = MagicMock(return_value=mock_reporter)
-        mock_reporter.__exit__ = MagicMock(return_value=False)
-
-        # Options must come before positional args with typer callback
-        result = runner.invoke(run_app, ["--repo", "myrepo", "extraction"])
-
-        assert result.exit_code == 0
-        assert "Repository: myrepo" in result.stdout
-
-    @patch("deriva.cli.commands.run.create_progress_reporter")
-    @patch("deriva.cli.commands.run.PipelineSession")
-    def test_extraction_with_phase(self, mock_session_class, mock_progress):
-        """Should run extraction with phase specified."""
-        mock_session = MagicMock()
-        mock_session.llm_info = {"provider": "openai", "model": "gpt-4"}
-        mock_session.run_extraction.return_value = {
-            "success": True,
-            "stats": {"nodes_created": 100},
-        }
-        mock_session_class.return_value.__enter__.return_value = mock_session
-
-        mock_reporter = MagicMock()
-        mock_progress.return_value = mock_reporter
-        mock_reporter.__enter__ = MagicMock(return_value=mock_reporter)
-        mock_reporter.__exit__ = MagicMock(return_value=False)
-
-        # Options must come before positional args with typer callback
-        result = runner.invoke(run_app, ["--phase", "classify", "extraction"])
-
-        assert result.exit_code == 0
-        assert "Phase: classify" in result.stdout
-
-    @patch("deriva.cli.commands.run.create_progress_reporter")
-    @patch("deriva.cli.commands.run.PipelineSession")
-    def test_extraction_failure(self, mock_session_class, mock_progress):
-        """Should exit with error code on failure."""
-        mock_session = MagicMock()
-        mock_session.llm_info = {"provider": "openai", "model": "gpt-4"}
-        mock_session.run_extraction.return_value = {
-            "success": False,
-            "errors": ["Failed"],
-        }
-        mock_session_class.return_value.__enter__.return_value = mock_session
-
-        mock_reporter = MagicMock()
-        mock_progress.return_value = mock_reporter
-        mock_reporter.__enter__ = MagicMock(return_value=mock_reporter)
-        mock_reporter.__exit__ = MagicMock(return_value=False)
-
-        result = runner.invoke(run_app, ["extraction"])
-
-        assert result.exit_code == 1
-
-
-class TestRunAppDerivation:
-    """Tests for run.py app derivation stage."""
-
-    @patch("deriva.cli.commands.run.PipelineSession")
-    def test_derivation_no_llm(self, mock_session_class):
-        """Should error when LLM not configured."""
-        mock_session = MagicMock()
-        mock_session.llm_info = None
-        mock_session_class.return_value.__enter__.return_value = mock_session
-
-        result = runner.invoke(run_app, ["derivation"])
-
-        assert result.exit_code == 1
-        assert "Error: Derivation requires LLM" in result.output
-
-    @patch("deriva.cli.commands.run.create_progress_reporter")
-    @patch("deriva.cli.commands.run.PipelineSession")
-    def test_derivation_success(self, mock_session_class, mock_progress):
-        """Should run derivation successfully."""
-        mock_session = MagicMock()
-        mock_session.llm_info = {"provider": "openai", "model": "gpt-4"}
-        mock_session.run_derivation.return_value = {
-            "success": True,
-            "stats": {"elements_created": 50},
-        }
-        mock_session_class.return_value.__enter__.return_value = mock_session
-
-        mock_reporter = MagicMock()
-        mock_progress.return_value = mock_reporter
-        mock_reporter.__enter__ = MagicMock(return_value=mock_reporter)
-        mock_reporter.__exit__ = MagicMock(return_value=False)
-
-        result = runner.invoke(run_app, ["derivation"])
-
-        assert result.exit_code == 0
-        assert "DERIVATION" in result.stdout
-        mock_session.run_derivation.assert_called_once()
-
-    @patch("deriva.cli.commands.run.create_progress_reporter")
-    @patch("deriva.cli.commands.run.PipelineSession")
-    def test_derivation_with_phase(self, mock_session_class, mock_progress):
-        """Should run derivation with phase specified."""
-        mock_session = MagicMock()
-        mock_session.llm_info = {"provider": "openai", "model": "gpt-4"}
-        mock_session.run_derivation.return_value = {
-            "success": True,
-            "stats": {"elements_created": 50},
-        }
-        mock_session_class.return_value.__enter__.return_value = mock_session
-
-        mock_reporter = MagicMock()
-        mock_progress.return_value = mock_reporter
-        mock_reporter.__enter__ = MagicMock(return_value=mock_reporter)
-        mock_reporter.__exit__ = MagicMock(return_value=False)
-
-        # Options must come before positional args with typer callback
-        result = runner.invoke(run_app, ["--phase", "generate", "derivation"])
-
-        assert result.exit_code == 0
-        assert "Phase: generate" in result.stdout
-
-
-class TestRunAppAllStage:
-    """Tests for run.py app all stage."""
-
-    @patch("deriva.cli.commands.run.create_progress_reporter")
-    @patch("deriva.cli.commands.run.PipelineSession")
-    def test_all_stage_success(self, mock_session_class, mock_progress):
-        """Should run all stages successfully."""
-        mock_session = MagicMock()
-        mock_session.llm_info = {"provider": "openai", "model": "gpt-4"}
-        mock_session.run_pipeline.return_value = {
-            "success": True,
-            "results": {},
-        }
-        mock_session_class.return_value.__enter__.return_value = mock_session
-
-        mock_reporter = MagicMock()
-        mock_progress.return_value = mock_reporter
-        mock_reporter.__enter__ = MagicMock(return_value=mock_reporter)
-        mock_reporter.__exit__ = MagicMock(return_value=False)
-
-        result = runner.invoke(run_app, ["all"])
-
-        assert result.exit_code == 0
-        assert "ALL" in result.stdout
-        mock_session.run_pipeline.assert_called_once()
-
-    @patch("deriva.cli.commands.run.create_progress_reporter")
-    @patch("deriva.cli.commands.run.PipelineSession")
-    def test_all_stage_with_repo(self, mock_session_class, mock_progress):
-        """Should run all stages with repo specified."""
-        mock_session = MagicMock()
-        mock_session.llm_info = {"provider": "openai", "model": "gpt-4"}
-        mock_session.run_pipeline.return_value = {
-            "success": True,
-            "results": {},
-        }
-        mock_session_class.return_value.__enter__.return_value = mock_session
-
-        mock_reporter = MagicMock()
-        mock_progress.return_value = mock_reporter
-        mock_reporter.__enter__ = MagicMock(return_value=mock_reporter)
-        mock_reporter.__exit__ = MagicMock(return_value=False)
-
-        # Options must come before positional args with typer callback
-        result = runner.invoke(run_app, ["--repo", "myrepo", "all"])
-
-        assert result.exit_code == 0
-        assert "Repository: myrepo" in result.stdout
-
-
-class TestRunAppOnlyStep:
-    """Tests for run.py app --only-step option."""
-
-    @patch("deriva.cli.commands.run.create_progress_reporter")
-    @patch("deriva.cli.commands.run.PipelineSession")
-    def test_only_step_extraction(self, mock_session_class, mock_progress):
-        """Should enable only specified extraction step."""
-        mock_session = MagicMock()
-        mock_session.llm_info = {"provider": "openai", "model": "gpt-4"}
-        mock_session.get_extraction_configs.return_value = [
-            {"node_type": "File"},
-            {"node_type": "Method"},
-            {"node_type": "BusinessConcept"},
-        ]
-        mock_session.run_extraction.return_value = {
-            "success": True,
-            "stats": {"nodes_created": 10},
-        }
-        mock_session_class.return_value.__enter__.return_value = mock_session
-
-        mock_reporter = MagicMock()
-        mock_progress.return_value = mock_reporter
-        mock_reporter.__enter__ = MagicMock(return_value=mock_reporter)
-        mock_reporter.__exit__ = MagicMock(return_value=False)
-
-        # Options must come before positional args with typer callback
-        result = runner.invoke(run_app, ["--only-step", "File", "extraction"])
-
-        assert result.exit_code == 0
-        assert "Enabling only extraction step: File" in result.stdout
-        mock_session.enable_step.assert_called_with("extraction", "File")
-        assert mock_session.disable_step.call_count == 2
-
-    @patch("deriva.cli.commands.run.create_progress_reporter")
-    @patch("deriva.cli.commands.run.PipelineSession")
-    def test_only_step_derivation(self, mock_session_class, mock_progress):
-        """Should enable only specified derivation step."""
-        mock_session = MagicMock()
-        mock_session.llm_info = {"provider": "openai", "model": "gpt-4"}
-        mock_session.get_derivation_configs.return_value = [
-            {"step_name": "ApplicationComponent"},
-            {"step_name": "ApplicationService"},
-        ]
-        mock_session.run_derivation.return_value = {
-            "success": True,
-            "stats": {"elements_created": 5},
-        }
-        mock_session_class.return_value.__enter__.return_value = mock_session
-
-        mock_reporter = MagicMock()
-        mock_progress.return_value = mock_reporter
-        mock_reporter.__enter__ = MagicMock(return_value=mock_reporter)
-        mock_reporter.__exit__ = MagicMock(return_value=False)
-
-        # Options must come before positional args with typer callback
-        result = runner.invoke(run_app, ["--only-step", "ApplicationComponent", "derivation"])
-
-        assert result.exit_code == 0
-        assert "Enabling only derivation step: ApplicationComponent" in result.stdout
-        mock_session.enable_step.assert_called_with("derivation", "ApplicationComponent")
-
-
-class TestRunAppLLMStatus:
-    """Tests for run.py app LLM status messages."""
-
-    @patch("deriva.cli.commands.run.create_progress_reporter")
-    @patch("deriva.cli.commands.run.PipelineSession")
-    def test_llm_configured_message(self, mock_session_class, mock_progress):
-        """Should show LLM configured message."""
-        mock_session = MagicMock()
-        mock_session.llm_info = {"provider": "anthropic", "model": "claude-3"}
-        mock_session.run_extraction.return_value = {
-            "success": True,
-            "stats": {},
-        }
-        mock_session_class.return_value.__enter__.return_value = mock_session
-
-        mock_reporter = MagicMock()
-        mock_progress.return_value = mock_reporter
-        mock_reporter.__enter__ = MagicMock(return_value=mock_reporter)
-        mock_reporter.__exit__ = MagicMock(return_value=False)
-
-        result = runner.invoke(run_app, ["extraction"])
-
-        assert result.exit_code == 0
-        assert "LLM configured: anthropic/claude-3" in result.stdout
-
-    @patch("deriva.cli.commands.run.create_progress_reporter")
-    @patch("deriva.cli.commands.run.PipelineSession")
-    def test_no_llm_flag(self, mock_session_class, mock_progress):
-        """Should show LLM disabled message with --no-llm flag."""
-        mock_session = MagicMock()
-        mock_session.llm_info = {"provider": "openai", "model": "gpt-4"}
-        mock_session.run_extraction.return_value = {
-            "success": True,
-            "stats": {},
-        }
-        mock_session_class.return_value.__enter__.return_value = mock_session
-
-        mock_reporter = MagicMock()
-        mock_progress.return_value = mock_reporter
-        mock_reporter.__enter__ = MagicMock(return_value=mock_reporter)
-        mock_reporter.__exit__ = MagicMock(return_value=False)
-
-        # Options must come before positional args with typer callback
-        result = runner.invoke(run_app, ["--no-llm", "extraction"])
-
-        assert result.exit_code == 0
-        assert "LLM disabled (--no-llm)" in result.stdout
-
-    @patch("deriva.cli.commands.run.create_progress_reporter")
-    @patch("deriva.cli.commands.run.PipelineSession")
-    def test_no_llm_warning(self, mock_session_class, mock_progress):
-        """Should show warning when LLM not configured."""
-        mock_session = MagicMock()
-        mock_session.llm_info = None
-        mock_session.run_extraction.return_value = {
-            "success": True,
-            "stats": {},
-        }
-        mock_session_class.return_value.__enter__.return_value = mock_session
-
-        mock_reporter = MagicMock()
-        mock_progress.return_value = mock_reporter
-        mock_reporter.__enter__ = MagicMock(return_value=mock_reporter)
-        mock_reporter.__exit__ = MagicMock(return_value=False)
-
-        result = runner.invoke(run_app, ["extraction"])
-
-        assert result.exit_code == 0
-        assert "Warning: LLM not configured" in result.stdout
-
-
-class TestRunAppVerboseQuiet:
-    """Tests for run.py app verbose and quiet options."""
-
-    @patch("deriva.cli.commands.run.create_progress_reporter")
-    @patch("deriva.cli.commands.run.PipelineSession")
-    def test_verbose_option(self, mock_session_class, mock_progress):
-        """Should pass verbose option."""
-        mock_session = MagicMock()
-        mock_session.llm_info = {"provider": "openai", "model": "gpt-4"}
-        mock_session.run_extraction.return_value = {
-            "success": True,
-            "stats": {},
-        }
-        mock_session_class.return_value.__enter__.return_value = mock_session
-
-        mock_reporter = MagicMock()
-        mock_progress.return_value = mock_reporter
-        mock_reporter.__enter__ = MagicMock(return_value=mock_reporter)
-        mock_reporter.__exit__ = MagicMock(return_value=False)
-
-        # Options must come before positional args with typer callback
-        runner.invoke(run_app, ["-v", "extraction"])
-
-        mock_session.run_extraction.assert_called_once()
-        call_kwargs = mock_session.run_extraction.call_args[1]
-        assert call_kwargs["verbose"] is True
-
-    @patch("deriva.cli.commands.run.create_progress_reporter")
-    @patch("deriva.cli.commands.run.PipelineSession")
-    def test_quiet_option(self, mock_session_class, mock_progress):
-        """Should pass quiet option to progress reporter."""
-        mock_session = MagicMock()
-        mock_session.llm_info = {"provider": "openai", "model": "gpt-4"}
-        mock_session.run_extraction.return_value = {
-            "success": True,
-            "stats": {},
-        }
-        mock_session_class.return_value.__enter__.return_value = mock_session
-
-        mock_reporter = MagicMock()
-        mock_progress.return_value = mock_reporter
-        mock_reporter.__enter__ = MagicMock(return_value=mock_reporter)
-        mock_reporter.__exit__ = MagicMock(return_value=False)
-
-        # Options must come before positional args with typer callback
-        runner.invoke(run_app, ["-q", "extraction"])
-
-        mock_progress.assert_called_once_with(quiet=True)
-
-
 class TestConfigAddCommand:
     @patch("deriva.cli.commands.config.PipelineSession")
     def test_adds_step(self, mock_session_class):
@@ -3059,8 +2717,26 @@ class TestConfigAddCommand:
         result = runner.invoke(app, ["config", "add", "derivation", "joint_consistency", "--phase", "refine", "--sequence", "4", "--params", '{"dry_run": true}'])
 
         assert result.exit_code == 0
-        mock_session.add_derivation_step.assert_called_once_with("joint_consistency", "refine", 4, params='{"dry_run": true}')
+        mock_session.add_derivation_step.assert_called_once_with("joint_consistency", "refine", 4, params='{"dry_run": true}', llm=False)
         assert "Added derivation step: joint_consistency (disabled)" in result.stdout
+
+    @patch("deriva.cli.commands.config.PipelineSession")
+    def test_adds_an_llm_step(self, mock_session_class):
+        mock_session = MagicMock()
+        mock_session.add_derivation_step.return_value = True
+        mock_session_class.return_value.__enter__.return_value = mock_session
+
+        result = runner.invoke(app, ["config", "add", "derivation", "NewType", "--phase", "generate", "--sequence", "21", "--llm"])
+
+        assert result.exit_code == 0
+        mock_session.add_derivation_step.assert_called_once_with("NewType", "generate", 21, params=None, llm=True)
+
+    @patch("deriva.cli.commands.config.PipelineSession")
+    def test_llm_flag_is_for_derivation_steps(self, mock_session_class):
+        result = runner.invoke(app, ["config", "add", "extraction", "NewNode", "--sequence", "21", "--llm"])
+
+        assert result.exit_code == 1
+        assert "--llm applies to derivation steps only" in result.output
 
     @patch("deriva.cli.commands.config.PipelineSession")
     def test_existing_step_exits_1(self, mock_session_class):
@@ -3266,6 +2942,17 @@ class TestSettingCommands:
 
         assert result.exit_code == 1
         assert "JSON list" in result.output
+
+    @patch("deriva.cli.commands.config.PipelineSession")
+    def test_setting_unset(self, mock_session_class):
+        mock_session = MagicMock()
+        mock_session.delete_setting.return_value = True
+        mock_session_class.return_value.__enter__.return_value = mock_session
+
+        result = runner.invoke(app, ["config", "setting", "unset", "llm_samples"])
+
+        assert result.exit_code == 0 and "Unset llm_samples" in result.output
+        mock_session.delete_setting.assert_called_once_with("llm_samples")
 
 
 class TestUpdateTemperature:
@@ -3583,3 +3270,97 @@ class TestConfigModelTest:
 
         assert result.exit_code == 1
         assert "No model config named nope" in result.output
+
+
+@patch("deriva.cli.cli.create_progress_reporter")
+@patch("deriva.cli.cli.PipelineSession")
+def test_a_full_run_says_it_stops_without_its_configured_model(mock_session_class, mock_progress):
+    mock_session = MagicMock()
+    mock_session.llm_info = None
+    mock_session.llm_no_model = False
+    mock_session.llm_error = "The model config mini has no API key: set LLM_MINI_KEY"
+    mock_session.run_pipeline.return_value = {"success": False, "errors": ["LLM not available: x"], "results": {}}
+    mock_session_class.return_value.__enter__.return_value = mock_session
+    mock_progress.return_value.__enter__ = MagicMock(return_value=MagicMock())
+    mock_progress.return_value.__exit__ = MagicMock(return_value=False)
+
+    result = runner.invoke(app, ["run", "all"])
+
+    assert result.exit_code == 1, result.output
+    assert "A full run needs the configured model and stops" in result.stdout
+    assert "will be skipped" not in result.stdout
+
+
+class TestRepoErrorsSayItOnce:
+    """repo delete and repo info end with their own message and exit 1; the exit is no error of its own ("Error: 1")."""
+
+    @patch("deriva.cli.commands.repo.PipelineSession")
+    def test_repo_delete_of_an_unknown_repository_says_why_once(self, mock_session_class):
+        session = MagicMock()
+        session.delete_repository.return_value = {"success": False, "error": "Repository not found: nosuch"}
+        mock_session_class.return_value.__enter__.return_value = session
+
+        result = runner.invoke(app, ["repo", "delete", "nosuch"])
+
+        assert result.exit_code == 1
+        assert "Repository not found: nosuch" in result.output
+        assert "Error: 1" not in result.output
+
+    @patch("deriva.cli.commands.repo.PipelineSession")
+    def test_repo_info_of_an_unknown_repository_says_why_once(self, mock_session_class):
+        session = MagicMock()
+        session.get_repository_info.return_value = None
+        mock_session_class.return_value.__enter__.return_value = session
+
+        result = runner.invoke(app, ["repo", "info", "nosuch"])
+
+        assert result.exit_code == 1
+        assert "Repository 'nosuch' not found." in result.output
+        assert "Error: 1" not in result.output
+
+
+class TestCommandSummaries:
+    """The command lists show a command's first help paragraph as it is written: a line break there splits a sentence."""
+
+    def test_every_command_summary_is_one_line(self):
+        import typer.main
+
+        def walk(command, path):
+            for name, sub in getattr(command, "commands", {}).items():
+                yield from walk(sub, [*path, name])
+            yield path, command
+
+        split = [" ".join(path) for path, command in walk(typer.main.get_command(app), []) if "\n" in (command.help or "").strip().split("\n\n")[0]]
+
+        assert split == []
+
+
+class TestSavedQueriesAreRefused:
+    """A derivation config whose queries write or read files is refused at the CLI with one clear line, no traceback."""
+
+    REASON = "Node: input_graph_query: Queries here are read-only: this one writes or loads (LOAD)"
+
+    @patch("deriva.cli.commands.config.PipelineSession")
+    def test_update_refuses_a_candidate_query_that_loads_a_file(self, mock_session_class):
+        from deriva.services import QueryRefused
+
+        mock_session_class.return_value.__enter__.return_value = MagicMock()
+        with patch("deriva.cli.commands.config.config.create_derivation_config_version", side_effect=QueryRefused(self.REASON)):
+            result = runner.invoke(app, ["config", "update", "derivation", "Node", "-q", "LOAD CSV FROM 'file:///x' AS r RETURN r"])
+
+        assert result.exit_code == 1
+        assert f"Error: {self.REASON}" in result.output and "Traceback" not in result.output
+
+    @patch("deriva.cli.commands.config.PipelineSession")
+    def test_add_refuses_a_step_whose_params_hold_such_a_query(self, mock_session_class):
+        from deriva.services import QueryRefused
+
+        mock_session = MagicMock()
+        mock_session.add_derivation_step.side_effect = QueryRefused("Linked: params.graph_links[0].query: Only grafeo's read-only procedures can be called")
+        mock_session_class.return_value.__enter__.return_value = mock_session
+        params = '{"graph_links": [{"query": "CALL grafeo.load_nodes_csv({path: \'x\'}) YIELD rows RETURN rows"}]}'
+
+        result = runner.invoke(app, ["config", "add", "derivation", "Linked", "--phase", "relationship", "--sequence", "1", "--params", params])
+
+        assert result.exit_code == 1
+        assert "Error: Linked: params.graph_links[0].query" in result.output and "Traceback" not in result.output

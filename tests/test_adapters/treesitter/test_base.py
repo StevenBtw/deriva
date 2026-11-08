@@ -238,6 +238,7 @@ class TestGetFilterConstants:
     def test_each_language_has_filter_constants(self, lang):
         """Each language extractor should provide filter constants."""
         extractor = get_extractor(lang)
+        assert extractor is not None
         constants = extractor.get_filter_constants()
 
         # A standard library module of each language is known as one

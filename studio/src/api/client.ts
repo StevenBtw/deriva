@@ -142,7 +142,7 @@ export const repositories = {
 export const storage = {
   overview: () => api.get<StorageOverview>("/api/storage"),
   /** Every cached LLM answer: the next runs call the LLM again */
-  clearLlmCache: () => api.del<{ bytes: number; files: number }>("/api/storage/llm-cache"),
+  clearLlmCache: () => api.del<{ bytes: number; files: number; entries: number | null }>("/api/storage/llm-cache"),
   /** The exported exchange files (*.xml) in workspace/output */
   deleteExports: () => api.del<{ bytes: number; files: number }>("/api/storage/exports"),
   /** A graph database without a repository */
@@ -153,6 +153,8 @@ export const settings = {
   /** ``default`` is the value that applies while the setting is not set */
   get: (key: string) => api.get<{ key: string; value: string | null; default?: string | null }>(`/api/settings/${seg(key)}`),
   set: (key: string, value: string) => api.put<{ key: string; value: string }>(`/api/settings/${seg(key)}`, { value }),
+  /** The default (or each step's own value) applies again */
+  unset: (key: string) => api.del<{ key: string; deleted: boolean }>(`/api/settings/${seg(key)}`),
 };
 
 export const fileTypes = {

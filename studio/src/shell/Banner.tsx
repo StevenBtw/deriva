@@ -6,6 +6,15 @@ type Props = { db: DbStatus; busy?: boolean; noModel?: boolean };
 
 /** Shown when the studio cannot use the databases (a CLI run holds them, a step is running) or has no LLM model yet. */
 export function Banner({ db, busy, noModel }: Props) {
+  // The last status request got no answer: what the page shows may be out of date until the studio answers again
+  if (db.unanswered) {
+    return (
+      <div className="banner warn" role="alert">
+        The studio is not reachable: it may have stopped, or its machine may be busy. This page keeps trying and clears this notice when the
+        studio answers; to start it again, run <code>deriva</code>.
+      </div>
+    );
+  }
   if (db.state === "held") {
     return (
       <div className="banner warn" role="status">

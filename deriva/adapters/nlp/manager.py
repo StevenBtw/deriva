@@ -22,10 +22,11 @@ class NlpTool:
     def __init__(self, models_dir: Path | None = None):
         self.models_dir = models_dir or resolve(NlpSettings().models_dir)
 
-    def ensure_models(self) -> None:
-        """Download and verify the pinned spaCy pipelines and translation models (nothing happens when they are present)."""
-        ensure_spacy(self.models_dir, download=True)
-        ensure_all(self.models_dir, download=True)
+    def ensure_models(self) -> dict[str, Path]:
+        """Download and verify the pinned spaCy pipelines and translation models (nothing happens when they are present),
+        by folder name: both kinds have a model per language."""
+        models = (*ensure_spacy(self.models_dir, download=True).values(), *ensure_all(self.models_dir, download=True).values())
+        return {path.name: path for path in models}
 
     def extract(self, documents: list[dict[str, str]], settings: dict[str, Any], keep_surface: list[str]) -> dict[str, Any]:
         """Candidate terms of the documents; `settings` are the thresholds from the step config."""

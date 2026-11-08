@@ -15,7 +15,9 @@ import json
 import logging
 import re
 from collections import defaultdict
-from collections.abc import Iterable
+from collections.abc import Generator, Iterable
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, cast
 
@@ -1503,8 +1505,8 @@ def get_connected_source_ids(
     if not source_ids or not graph_manager:
         return set(source_ids) if source_ids else set()
 
-    # Build Cypher query for neighbors within max_hops
-    # Using variable-length path pattern for efficiency
+    # Neighbors within max_hops, as a variable-length pattern. GQL matches walks (Cypher trails), so a source
+    # can come back as its own neighbor; the result includes the sources either way.
     query = f"""
         MATCH (n)
         WHERE n.id IN $source_ids
@@ -2307,6 +2309,12 @@ class RoleConfig:
     structural: tuple[tuple[str, str, str], ...] = ()
     # A candidate with a structural role keeps its own name as written: no template, no naming call
     structural_as_written: bool = False
+    # element_per "candidate" only: graph labels whose candidates fill {subject} with their name as written (a product
+    # name the closed list writes, such as PostgreSQL), not split by case; other candidates' subjects are split
+    subject_as_written: frozenset[str] = frozenset()
+    # element_per "candidate" with a name_template only: candidates whose names would still repeat within the step are
+    # named by this template instead ("{role} ({subject})"); empty: a repeated name leaves the later candidate out
+    repeat_template: str = ""
     # element_per "unit" only: roles a deployable unit shows itself, (unit property, role key). A unit whose
     # property lists files (such as webEntries) gets that role's element with those files as members, no call
     unit_roles: tuple[tuple[str, str], ...] = ()
@@ -2317,6 +2325,27 @@ class RoleConfig:
     # Graph labels in the order their candidates claim a structure name (two candidates with one structure name: the
     # earlier label keeps it, so a unit is never left out for a module beside it); empty: the step's ranking decides
     name_priority: tuple[str, ...] = ()
+    # element_per "unit" only: a source file whose text calls a registration (a pattern of ``registrations``, its
+    # ``service`` group the service it registers) takes ``registration_role`` without a call, with the services as its
+    # name. A match whose first name is a method the file defines is that definition (generated code), not a call; a
+    # service an ``excluded_services`` pattern matches in full, ignoring case, is a technical one and counts for nothing
+    registration_role: str = ""
+    registrations: tuple[str, ...] = ()
+    excluded_services: tuple[str, ...] = ()
+
+
+def registered_services(text: str, patterns: tuple[str, ...], excluded: tuple[str, ...], defined: set[str]) -> list[str]:
+    """The services a source text registers by a call (``RoleConfig.registrations``), sorted and each once."""
+    services: set[str] = set()
+    for pattern in patterns:
+        for match in re.finditer(pattern, text):
+            first = re.match(r"\W*(\w+)", match.group(0))
+            if first is not None and first.group(1) in defined:
+                continue
+            service = match.group("service")
+            if service and not any(re.fullmatch(x, service, re.IGNORECASE) for x in excluded):
+                services.add(service)
+    return sorted(services)
 
 
 ROLE_SCHEMA: dict[str, Any] = {
@@ -2452,12 +2481,33 @@ def source_casing(name: str, source_name: str) -> str:
     return " ".join(spelled.get(word.lower(), word) for word in name.split(" "))
 
 
+# A combined run (several repositories in one graph) keeps the repository in element identifiers: the tails alone
+# collide there (two repositories' frontend, docs or customer). The derivation service sets it for the run.
+_KEEP_REPOSITORY: ContextVar[bool] = ContextVar("keep_repository", default=False)
+
+
+@contextmanager
+def repository_in_identifiers(keep: bool) -> Generator[None]:
+    """Element identifiers inside the block keep the repository part of their source ids (a combined run)."""
+    token = _KEEP_REPOSITORY.set(keep)
+    try:
+        yield
+    finally:
+        _KEEP_REPOSITORY.reset(token)
+
+
 def element_identifier(element_type: str, source_id: str) -> str:
-    """Stable element identifier from its type and source node (``ac_big_data_kafka``)."""
+    """Stable element identifier from its type and source node (``ac_big_data_kafka``); in a combined run with the
+    repository (``ac_bigdata__big_data_kafka``)."""
     prefix = "".join(c for c in element_type if c.isupper()).lower()
+    return sanitize_identifier(f"{prefix}_{_source_tail(source_id)}")
+
+
+def _source_tail(source_id: str) -> str:
+    """A source id without its kind and (outside a combined run) its repository: ``unit::shop::frontend`` gives
+    ``frontend``, in a combined run ``shop::frontend``."""
     parts = source_id.split("::")
-    tail = "::".join(parts[2:]) if len(parts) >= 3 else source_id
-    return sanitize_identifier(f"{prefix}_{tail}")
+    return "::".join(parts[1 if _KEEP_REPOSITORY.get() else 2 :]) if len(parts) >= 3 else source_id
 
 
 def candidate_identifier(element_type: str, source_id: str, sources: Iterable[str]) -> str:
@@ -2465,7 +2515,7 @@ def candidate_identifier(element_type: str, source_id: str, sources: Iterable[st
     unit's folder, with modules inside) keeps its kind in it, so the unit keeps the plain one."""
     identifier = element_identifier(element_type, source_id)
     if source_id.startswith("module::") and any(s.startswith(UNIT_PREFIX) and element_identifier(element_type, s) == identifier for s in sources):
-        return sanitize_identifier(f"{identifier.split('_', 1)[0]}_module::{source_id.split('::', 2)[2]}")
+        return sanitize_identifier(f"{identifier.split('_', 1)[0]}_module::{_source_tail(source_id)}")
     return identifier
 
 

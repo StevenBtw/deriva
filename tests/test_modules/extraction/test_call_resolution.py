@@ -115,13 +115,18 @@ def test_a_program_call_crosses_folders_within_the_module_root_but_not_into_anot
     roots = {"app/cbl/COMEN01C.cbl": "", "app/app-x/cbl/COACTUPC.cbl": ""}  # no manifest: the repository root
 
     edges, _ = _extract_call_edges(
-        calls=[_call("COACTUPC", caller="MAIN")], method_lookup=lookup, file_path="app/cbl/COMEN01C.cbl", repo_name="r", global_method_lookup=global_lookup, scope_of=roots.get
+        calls=[_call("COACTUPC", caller="MAIN")],
+        method_lookup=lookup,
+        file_path="app/cbl/COMEN01C.cbl",
+        repo_name="r",
+        global_method_lookup=global_lookup,
+        scope_of=roots.__getitem__,
     )
     assert _targets(edges) == [generate_method_node_id("r", "app/app-x/cbl/COACTUPC.cbl", "COACTUPC")]
 
     roots = {"svc-a/main.py": "svc-a", "svc-b/util.py": "svc-b"}
     global_lookup = {("helper", None): [_candidate("svc-b/util.py", "helper")]}
     edges, _ = _extract_call_edges(
-        calls=[_call("helper", caller="MAIN")], method_lookup=lookup, file_path="svc-a/main.py", repo_name="r", global_method_lookup=global_lookup, scope_of=roots.get
+        calls=[_call("helper", caller="MAIN")], method_lookup=lookup, file_path="svc-a/main.py", repo_name="r", global_method_lookup=global_lookup, scope_of=roots.__getitem__
     )
     assert edges == []

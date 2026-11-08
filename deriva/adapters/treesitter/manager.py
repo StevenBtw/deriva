@@ -6,9 +6,10 @@ Extracts types, methods, and imports from source files using tree-sitter parsers
 Supported Languages:
     - Python (.py, .pyw, .pyi) - Full support
     - JavaScript (.js, .mjs, .cjs, .jsx) - Full support
-    - TypeScript (.ts, .tsx, .mts, .cts) - Limited support (see note below)
+    - TypeScript (.ts, .tsx, .mts, .cts) - Full support (the TSX grammar for .tsx)
     - Java (.java) - Full support
     - C# (.cs) - Full support
+    - Go (.go) - Full support
     - COBOL (.cbl, .cob, .cobol, .cpy) - Structural (programs, paragraphs, copybook records)
     - JCL (.jcl, .prc, .proc) - Structural (jobs, procedures, steps)
     - BMS (.bms) - Structural (screen maps)
@@ -20,19 +21,9 @@ Structural Support Note:
     languages/structural.py) and return the same models.
 
 TypeScript Support Note:
-    TypeScript files are currently parsed using the JavaScript grammar.
-    This provides approximately 90% accuracy for common patterns but may miss:
-
-    - Interface definitions (parsed as generic objects)
-    - Generic type parameters (e.g., Array<T>, Promise<Result>)
-    - Complex type annotations
-    - Type-only imports/exports
-    - Enums (partially supported)
-
-    For most practical extraction purposes (classes, functions, imports),
-    the JavaScript grammar handles TypeScript adequately. A dedicated
-    TypeScript extractor using tree-sitter-typescript is planned for
-    full TypeScript support.
+    TypeScript files are parsed with tree-sitter-typescript (languages/typescript.py), which builds on the
+    JavaScript extractor and adds interfaces, type aliases, enums, implements, decorators and typed parameters.
+    A .tsx file is parsed with the TSX grammar, any other TypeScript file with the TypeScript grammar.
 
 Usage:
     from deriva.adapters.treesitter import TreeSitterManager
@@ -84,7 +75,7 @@ class TreeSitterManager:
     """
 
     # Supported languages
-    SUPPORTED_LANGUAGES = {"python", "javascript", "typescript", "java", "csharp", "cobol", "jcl", "bms", "sql"}
+    SUPPORTED_LANGUAGES = {"python", "javascript", "typescript", "java", "csharp", "golang", "cobol", "jcl", "bms", "sql"}
 
     # Extension to language mapping
     EXTENSION_MAP: dict[str, str] = {
@@ -101,6 +92,7 @@ class TreeSitterManager:
         ".cts": "typescript",
         ".java": "java",
         ".cs": "csharp",
+        ".go": "golang",
         ".cbl": "cobol",
         ".cob": "cobol",
         ".cobol": "cobol",
@@ -310,8 +302,7 @@ class TreeSitterManager:
     def _resolve_language(self, file_path: str | None, language: str | None) -> str | None:
         """Resolve the language to use for extraction.
 
-        TypeScript files are mapped to JavaScript for extraction.
-        See module docstring for details on TypeScript support limitations.
+        TypeScript files have an extractor of their own (see the module docstring).
 
         Args:
             file_path: Optional file path to detect language from extension
@@ -322,23 +313,14 @@ class TreeSitterManager:
         """
         if language:
             lang = language.lower()
-            # TypeScript -> JavaScript mapping
-            # The JavaScript grammar handles ~90% of TS patterns correctly.
-            # Missing: interfaces, generics, type-only imports, complex annotations
-            # TODO: Add dedicated TypeScript extractor for full support
-            if lang == "typescript":
-                lang = "javascript"
             return lang if lang in self.SUPPORTED_LANGUAGES else None
 
         if file_path:
-            detected = self.detect_language(file_path)
-            if detected == "typescript":
-                detected = "javascript"
-            return detected
+            return self.detect_language(file_path)
 
         return None
 
-    def _get_parser(self, language: str, extractor: Any) -> tree_sitter.Parser:
+    def _get_parser(self, language: str, extractor: Any, file_path: str | None = None) -> tree_sitter.Parser:
         """Get or create a parser for the given language.
 
         Args:
@@ -348,14 +330,14 @@ class TreeSitterManager:
         Returns:
             Configured tree-sitter parser
         """
-        if language not in self._parsers:
-            raw_language: object = extractor.get_language()
+        # An extractor with more than one grammar picks one per file (TypeScript: TSX for a .tsx file)
+        grammar_for = getattr(extractor, "grammar_for", None)
+        key = f"{language}:{grammar_for(file_path)}" if grammar_for is not None else language
+        if key not in self._parsers:
+            raw_language: object = extractor.get_language_for(file_path) if grammar_for is not None else extractor.get_language()
             # Wrap in Language object (tree-sitter 0.24+ API)
-            ts_language = tree_sitter.Language(raw_language)
-            parser = tree_sitter.Parser(ts_language)
-            self._parsers[language] = parser
-
-        return self._parsers[language]
+            self._parsers[key] = tree_sitter.Parser(tree_sitter.Language(raw_language))
+        return self._parsers[key]
 
     def _parse(self, source: str, language: str, extractor: Any, file_path: str | None = None) -> Any:
         """Parse source code into a tree-sitter tree.
@@ -374,7 +356,7 @@ class TreeSitterManager:
         try:
             if isinstance(extractor, StructuralExtractor):
                 return extractor.parse_source(source, file_path)
-            parser = self._get_parser(language, extractor)
+            parser = self._get_parser(language, extractor, file_path)
             return parser.parse(source.encode("utf-8"))
         except Exception:
             return None

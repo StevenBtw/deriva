@@ -31,8 +31,14 @@ vi.mock("../api/client", async () => {
 });
 
 vi.mock("../widgets/GraphWidget", () => ({
-  GraphWidget: ({ database, view }: { database: string; view: { nodes: unknown[] } }) => (
-    <div data-testid={`graph-${database}`}>{view.nodes.length} nodes</div>
+  GraphWidget: ({ database, view, onDrawn }: { database: string; view: { nodes: unknown[] }; onDrawn?: (drawn: { nodes: number; edges: number }) => void }) => (
+    <div data-testid={`graph-${database}`}>
+      {view.nodes.length} nodes
+      {/* A query typed in the widget draws its result */}
+      <button type="button" onClick={() => onDrawn?.({ nodes: 5, edges: 2 })}>
+        query {database}
+      </button>
+    </div>
   ),
 }));
 
@@ -168,6 +174,17 @@ describe("Workspace", () => {
     expect(within(log).getByText(/Run started · extraction · ToolShed/)).toBeInTheDocument();
   });
 
+  it("shows no tokens or latency for a cache hit (no request was sent)", async () => {
+    await startRun();
+
+    act(() => handlers.onEvent?.(llm(2, "c9", { cache_hit: true, tokens_in: 0, latency_ms: 0 })));
+
+    const log = screen.getByRole("log");
+    expect(log).toHaveTextContent("LLM #9 · DirectoryClassification · cache hit");
+    expect(log).not.toHaveTextContent("tokens in");
+    expect(log).not.toHaveTextContent(" ms");
+  });
+
   it("says which metrics a call did not record instead of showing zeros", async () => {
     await startRun();
 
@@ -201,6 +218,26 @@ describe("Workspace", () => {
     await userEvent.click(await screen.findByRole("button", { name: /Cancel/ }));
 
     expect(runs.cancel).toHaveBeenCalledWith("r1");
+  });
+
+  it("reads the repositories again when the run has finished, not while it holds the session", async () => {
+    vi.mocked(session.current).mockResolvedValue({ repository: "deriva" });
+    render(<Workspace />);
+    await screen.findByRole("option", { name: "deriva" });
+    await act(async () => {});
+    const lists = vi.mocked(repositories.list).mock.calls.length;
+    const reads = vi.mocked(session.current).mock.calls.length;
+
+    await userEvent.click(screen.getByRole("button", { name: /^Run$/ }));
+    expect(await screen.findByRole("button", { name: /Cancel/ })).toBeInTheDocument();
+    act(() => handlers.onEvent?.(event(2, "progress", { phase: "extraction", step: "Repository", status: "complete" })));
+    await act(async () => {});
+    expect(vi.mocked(repositories.list).mock.calls.length).toBe(lists);
+    expect(vi.mocked(session.current).mock.calls.length).toBe(reads);
+
+    act(() => handlers.onEnd?.("finished"));
+    await waitFor(() => expect(vi.mocked(repositories.list).mock.calls.length).toBe(lists + 1));
+    expect(vi.mocked(session.current).mock.calls.length).toBe(reads + 1);
   });
 
   it("explains a run that is already in progress", async () => {
@@ -420,6 +457,18 @@ describe("Workspace", () => {
     expect((await screen.findAllByText("1 of 40 nodes · 0 of 39 edges")).length).toBe(2);
   });
 
+  it("counts what a typed query draws in the separate view", async () => {
+    vi.mocked(graph.view).mockResolvedValue({ nodes: [{ id: "1" }], edges: [], totals: { nodes: { File: 40 }, edges: { CONTAINS: 39 } } });
+    render(<Workspace />);
+    await userEvent.click(await screen.findByRole("button", { name: "Separate" }));
+    await screen.findAllByText("1 of 40 nodes · 0 of 39 edges");
+
+    await userEvent.click(screen.getByRole("button", { name: "query graph" }));
+
+    expect(await screen.findByText("5 of 40 nodes · 2 of 39 edges")).toBeInTheDocument();
+    expect(screen.getAllByText("1 of 40 nodes · 0 of 39 edges")).toHaveLength(1); // the model pane keeps its own count
+  });
+
   it("pulses the running derivation step's candidates in the linked view", async () => {
     render(<Workspace />);
     await screen.findByRole("option", { name: "deriva" });
@@ -464,7 +513,7 @@ describe("Workspace", () => {
     render(<Workspace />);
 
     expect(await screen.findByText("Repository to model")).toBeInTheDocument();
-    expect(screen.getByText("1 repository · 2 graph nodes · 1 element")).toBeInTheDocument();
+    expect(screen.getByText("1 repository · 3 graph nodes · 1 element")).toBeInTheDocument();
   });
 
   it("ends the linked view with the model, whose glyph opens the model panel", async () => {

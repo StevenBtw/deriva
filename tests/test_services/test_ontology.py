@@ -37,11 +37,14 @@ class FakeSession:
         return [
             {"element_type": "Node", "enabled": True, "phase": "generate", "input_graph_query": "MATCH (t:Graph:Technology) RETURN t"},
             {"element_type": "ApplicationComponent", "enabled": False, "phase": "generate", "input_graph_query": "MATCH (d:`Graph:Directory`) RETURN d"},
+            {"element_type": "BusinessActor", "enabled": False, "phase": "generate", "input_graph_query": None},
+            {"element_type": "DocumentationActors", "enabled": True, "phase": "generate", "input_graph_query": None},
             {"element_type": "pagerank", "enabled": True, "phase": "prep", "input_graph_query": None},
         ]
 
-    def get_config_versions(self):
-        return {"extraction": {"Directory": 2, "Technology": 7, "DirectoryClassification": 9}, "derivation": {"Node": 4}}
+    def get_config_versions(self, include_disabled=False):
+        derivation = {"Node": 4, "ApplicationComponent": 6} if include_disabled else {"Node": 4}
+        return {"extraction": {"Directory": 2, "Technology": 7, "DirectoryClassification": 9}, "derivation": derivation}
 
     def get_archimate_stats(self):
         return {"total_elements": 3, "total_relationships": 2, "by_type": {"Node": 2, "ApplicationComponent": 1}}
@@ -90,15 +93,36 @@ def test_output_ontology_lists_types_per_layer_with_their_step_and_the_rules():
     view = output_ontology(FakeSession())
 
     types = {t["name"]: t for t in view["element_types"]}
-    assert len(types) == 18  # the metamodel's types (0.8.8: BusinessRole, BusinessService, TechnologyFunction added; Artifact derived)
+    assert len(types) == 35  # the ArchiMate core: every element type of the business, application and technology layers
     assert (types["Artifact"]["layer"], types["Artifact"]["step"]) == ("Technology", None)
     assert (types["Node"]["layer"], types["Node"]["count"], types["Node"]["step"]) == ("Technology", 2, {"enabled": True, "version": 4})
-    assert types["BusinessActor"]["step"] is None
+    assert types["BusinessRole"]["step"] is None
     assert {r["name"]: r["count"] for r in view["relationship_types"]}["Serving"] == 2
     rules = {(r["source"], r["target"]): r for r in view["rules"]}
     assert "Serving" in rules[("ApplicationService", "ApplicationComponent")]["direct"]
     assert "Realization" in rules[("ApplicationComponent", "ApplicationService")]["derived"]
     assert "Realization" not in rules[("ApplicationComponent", "ApplicationService")]["direct"]
+
+
+def test_output_ontology_gives_each_type_what_a_selection_of_the_metamodel_needs():
+    types = {t["name"]: t for t in output_ontology(FakeSession())["element_types"]}
+
+    assert (types["Node"]["aspect"], types["DataObject"]["aspect"], types["BusinessEvent"]["aspect"]) == ("Structure", "Passive", "Behavior")
+    # Every step that produces the type, with the shipped selection: actors also come from the documentation
+    steps = {s["name"]: s for s in types["BusinessActor"]["steps"]}
+    assert set(steps) == {"BusinessActor", "DocumentationActors"}
+    assert (steps["BusinessActor"]["enabled"], steps["DocumentationActors"]["enabled"]) == (False, True)
+    assert steps["DocumentationActors"]["shipped"] is True
+    assert [s["name"] for s in types["Node"]["steps"]] == ["Node"] and types["Node"]["steps"][0]["version"] == 4
+    assert types["BusinessRole"]["steps"] == []
+    # A step switched off keeps its version
+    assert types["ApplicationComponent"]["steps"][0]["version"] == 6
+    # What its elements are built on, from switching each step off
+    assert types["ApplicationService"]["needs"] == ["ApplicationComponent", "ApplicationInterface"]
+    # A business element's enterprise links run through these
+    assert types["BusinessActor"]["needs"] == ["ApplicationComponent", "ApplicationService"]
+    assert types["BusinessObject"]["needs"] == ["DataObject"]
+    assert types["Node"]["needs"] == []
 
 
 def test_endpoint_pairs_are_read_distinct_and_without_a_row_limit():

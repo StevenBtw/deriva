@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any, cast
 
 import pytest
+
+if TYPE_CHECKING:
+    from deriva.adapters.graph import GraphManager
 
 from deriva.modules.derivation.base import ContainmentRule, RelationshipRule, derive_consolidated_relationships, derive_containment_relationships, element_source_paths
 
@@ -160,7 +163,7 @@ class TestConsolidatedPass:
         paths = {"dir::r::core_crud": "r/core/crud", "dir::r::crud-tools": "r/crud-tools", "file::r::core/crud/rest/Find.java": "r/core/crud/rest/Find.java"}
 
         relationships = derive_consolidated_relationships(
-            all_elements=[crud, crud_tools, find], relationship_rules=rules, llm_query_fn=None, graph_manager=FakeGraph(paths), containment=RULES
+            all_elements=[crud, crud_tools, find], relationship_rules=rules, llm_query_fn=None, graph_manager=cast("GraphManager", FakeGraph(paths)), containment=RULES
         )
 
         assert _pairs(relationships) == {("ac_crud", "Composition", "ai_find")}
@@ -172,7 +175,7 @@ class TestConsolidatedPass:
         rules = {"ApplicationComponent": ([RelationshipRule(target_type="ApplicationService", rel_type="Realization")], [])}
 
         relationships = derive_consolidated_relationships(
-            all_elements=[core, service], relationship_rules=rules, llm_query_fn=None, graph_manager=FakeGraph({"dir::r::data": "r/data"}), containment=RULES
+            all_elements=[core, service], relationship_rules=rules, llm_query_fn=None, graph_manager=cast("GraphManager", FakeGraph({"dir::r::data": "r/data"})), containment=RULES
         )
 
         assert ("ac_data", "Realization", "as_data") in _pairs(relationships)
@@ -189,7 +192,7 @@ class TestConsolidatedPass:
         }
 
         relationships = derive_consolidated_relationships(
-            all_elements=[core, service], relationship_rules=rules, llm_query_fn=None, graph_manager=FakeGraph({"dir::r::data": "r/data"}), containment=RULES
+            all_elements=[core, service], relationship_rules=rules, llm_query_fn=None, graph_manager=cast("GraphManager", FakeGraph({"dir::r::data": "r/data"})), containment=RULES
         )
 
         assert {p for p in _pairs(relationships) if p[0] == "ac_data"} == {("ac_data", "Realization", "as_data")}
@@ -237,7 +240,7 @@ class TestLlmProposals:
             all_elements=[core, api, orders],
             relationship_rules=rules,
             llm_query_fn=lambda prompt, schema, **kw: SimpleNamespace(content=json.dumps({"relationships": proposals})),
-            graph_manager=Connected(paths),
+            graph_manager=cast("GraphManager", Connected(paths)),
             llm_config=RelationshipLLMConfig(instruction="rules", persona="P"),
             containment=RULES,
         )

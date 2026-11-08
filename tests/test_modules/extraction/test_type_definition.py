@@ -826,3 +826,22 @@ def test_a_ddl_table_is_a_table_type():
 
     (node,) = result["data"]["nodes"]
     assert node["properties"]["typeName"] == "benchmark_runs" and node["properties"]["category"] == "table"
+
+
+def test_a_snippet_keeps_at_most_the_line_limit_of_each_line():
+    """A one-line file would give every type it holds the whole file: each snippet line is cut to the limit."""
+    from deriva.modules.extraction.type_definition import code_snippet
+
+    text = "line one\n" + "x" * 5000 + "\nline three"
+    assert code_snippet(text, 1, 3, max_line_chars=10) == "line one\n" + "x" * 10 + "\nline three"
+    assert code_snippet(text, 2, 2) == "x" * 5000  # no limit keeps the lines whole
+
+
+def test_types_in_a_one_line_file_store_capped_snippets():
+    from deriva.modules.extraction.type_definition import extract_types_from_source
+
+    text = "".join(f"class C{i} {{ m() {{ return {i}; }} }} " for i in range(200)) + " " * 10_000
+    result = extract_types_from_source("web/app.min.js", text, "r", max_line_chars=100)
+
+    snippets = [n["properties"]["codeSnippet"] for n in result["data"]["nodes"] if n["label"] == "TypeDefinition"]
+    assert len(snippets) == 200 and all(len(s) <= 100 for s in snippets)

@@ -71,3 +71,81 @@ def test_an_empty_model_is_weak_with_one_reason():
     report = _quality([], [])
 
     assert report["verdict"] == "weak" and report["reasons"] == ["the model has no elements"]
+
+
+def _level(element: dict, *levels: str) -> dict:
+    return {**element, "levels": list(levels)}
+
+
+def _enterprise_model(connected: bool):
+    elements = [
+        _level(_element("system"), "enterprise"),
+        _level(_element("service", element_type="ApplicationService"), "enterprise"),
+        _level(_element("account", layer="Business", element_type="BusinessObject"), "enterprise"),
+        _level(_element("card", layer="Business", element_type="BusinessObject"), "enterprise"),
+        _level(_element("unit"), "solution"),
+        _level(_element("host", layer="Technology"), "solution"),
+    ]
+    relationships = [{**_rel("system", "service", "Realization"), "levels": ["enterprise"]}, {**_rel("host", "unit"), "levels": ["solution"]}]
+    # At the solution level everything connects, which the whole model's orphans cannot tell apart
+    relationships += [{**_rel("unit", name), "levels": []} for name in ("account", "card", "system")]
+    if connected:
+        relationships += [{**_rel("system", name, "Access"), "levels": ["enterprise"]} for name in ("account", "card")]
+    return elements, relationships
+
+
+def test_elements_that_float_at_the_enterprise_level_make_a_model_weak():
+    report = _quality(*_enterprise_model(connected=False))
+
+    assert report["orphans"] == []
+    assert [e["name"] for e in report["enterprise_orphans"]] == ["Account", "Card"]
+    assert report["verdict"] == "weak"
+    assert any("business elements at the enterprise level" in reason and "2 of 2" in reason for reason in report["reasons"])
+
+    connected = _quality(*_enterprise_model(connected=True))
+    assert connected["enterprise_orphans"] == [] and connected["verdict"] == "ok"
+
+
+def test_roles_do_not_float_while_no_step_can_link_them():
+    """A role on its own says nothing about the model: no step derives what a role would be assigned to."""
+    roles = [_level(_element(name, layer="Business", element_type="BusinessRole"), "enterprise") for name in ("clerk", "manager", "owner")]
+    system = [_level(_element("app"), "enterprise"), _level(_element("host", layer="Technology"), "solution")]
+    below = [{**_rel(role["id"], "app"), "levels": []} for role in roles] + [{**_rel("host", "app"), "levels": []}]
+
+    report = _quality([*roles, *system], below)
+    assert report["enterprise_orphans"] == [] and report["verdict"] == "ok"
+
+    # The other business elements are still judged, on their own share
+    business = _level(_element("bo", layer="Business", element_type="BusinessObject"), "enterprise")
+    report = _quality([*roles, business, *system], [*below, {**_rel("bo", "app"), "levels": []}])
+    assert [e["id"] for e in report["enterprise_orphans"]] == ["bo"]
+    assert any("1 of 1 business elements" in reason for reason in report["reasons"])
+
+
+def test_a_model_of_one_enterprise_element_has_nothing_to_connect_to():
+    elements = [
+        _level(_element("lib"), "enterprise"),
+        _level(_element("fn", element_type="ApplicationFunction"), "solution"),
+        _level(_element("host", layer="Technology"), "solution"),
+    ]
+    relationships = [{**_rel("lib", "fn", "Assignment"), "levels": []}, {**_rel("host", "lib"), "levels": []}]
+
+    assert _quality(elements, relationships)["verdict"] == "ok"
+
+
+def test_services_without_a_business_layer_do_not_float():
+    """The business layer may be empty by design: only its elements can float."""
+    elements = [_level(_element(name), "enterprise") for name in ("first", "second")] + [_level(_element("host", layer="Technology"), "solution")]
+    relationships = [{**_rel("host", "first"), "levels": []}, {**_rel("host", "second"), "levels": []}]
+
+    report = _quality(elements, relationships)
+
+    assert report["enterprise_orphans"] == [] and report["verdict"] == "ok"
+
+
+def test_a_link_to_a_disabled_element_does_not_hide_a_floating_business_element():
+    business = {"id": "bo", "name": "Order", "type": "BusinessObject", "layer": "Business", "sources": [], "levels": ["enterprise"]}
+    system = {"id": "ac", "name": "Shop", "type": "ApplicationComponent", "layer": "Application", "sources": [], "levels": ["enterprise"]}
+    # "gone" is disabled: the caller passes enabled elements only
+    link = {"source": "gone", "target": "bo", "type": "Access", "levels": ["enterprise"]}
+    assert [o["id"] for o in _quality([business, system], [link])["enterprise_orphans"]] == ["bo"]

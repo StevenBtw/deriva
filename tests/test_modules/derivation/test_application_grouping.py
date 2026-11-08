@@ -105,3 +105,31 @@ def test_the_title_name_is_marked_when_the_title_has_more_parts():
     prompt = build_grouping_prompt("Group.", [], ["Shop System", "Online Store", "Front"], whole=2, mark_name=True)
 
     assert '- "Shop System" (the name in the title)' in prompt and '- "Online Store"\n' in prompt
+
+
+def test_a_tilde_fence_is_code_and_only_its_own_kind_closes_it():
+    """CommonMark fences use backticks or tildes: a heading inside either is none, and a fence of the other kind inside
+    one is code, so it closes nothing."""
+    from deriva.modules.derivation.application_grouping import fence
+
+    docs = {"r/README.md": "# Shop\n\n~~~text\n## Not a heading\n```\n## Still code\n~~~\n\n## Use\n\nThe shop.\n"}
+
+    assert [h.text for h in doc_headings(docs, {})] == ["Shop", "Use"]
+    assert (fence("~~~~ yaml", ""), fence("~~~", "~~~~"), fence("~~~~~", "~~~~"), fence("```", "~~~")) == ("~~~~", "~~~~", "", "~~~")
+
+
+def test_an_underscore_inside_a_word_stays_and_emphasis_goes():
+    from deriva.modules.derivation.application_grouping import clean_heading
+
+    assert clean_heading("The _order_service_ and `__init__` in **bold**") == "The order_service and init in bold"
+
+
+def test_a_title_with_a_long_run_of_spaces_splits_in_linear_time():
+    """A one-line README can hold a very long run of spaces: the dash split takes it whole, once."""
+    import time
+
+    from deriva.modules.derivation.application_grouping import _DASH
+
+    started = time.perf_counter()
+    assert _DASH.split(" " * 200_000 + "Shop - Store") == [" " * 200_000 + "Shop", "Store"]
+    assert time.perf_counter() - started < 1.0  # a plain \s+ took minutes here

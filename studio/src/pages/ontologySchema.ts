@@ -11,6 +11,31 @@ const groupOf = (data: IntermediateOntology, group: string) => (data.groups.incl
 export const nodeSize = (count: number) => (count > 0 ? 5 + 3 * Math.log10(count + 1) : 3.5);
 const edgeSize = (count: number) => 0.6 + 0.7 * Math.log10(count + 1);
 
+// How the widget draws the graph: it fits the whole layout into the view (about this many pixels, inside its
+// margin) and writes a type's label (12 px, about 7 px a character) to the right of its node
+const VIEW = { width: 900, height: 560 };
+const LABEL = { char: 7, height: 16, gap: 3 };
+
+export type LabelBox = { name: string; x1: number; x2: number; y1: number; y2: number };
+
+const extent = (values: number[]) => Math.max(...values) - Math.min(...values);
+
+/** Layout units per pixel when the widget fits these positions into the view. */
+function unitsPerPixel(points: { x: number; y: number }[]): number {
+  return Math.max(extent(points.map((p) => p.x)) / VIEW.width, extent(points.map((p) => p.y)) / VIEW.height) || 0.01;
+}
+
+function boxAt(name: string, p: { x: number; y: number }, radius: number, perPx: number): LabelBox {
+  const half = (LABEL.height / 2) * perPx;
+  return { name, x1: p.x - radius * perPx, x2: p.x + (radius + LABEL.gap + LABEL.char * name.length) * perPx, y1: p.y - half, y2: p.y + half };
+}
+
+/** Each type's node and label as a box in layout units, as the widget draws them when it fits the layout into view. */
+export function labelBoxes(at: Map<string, { x: number; y: number }>, data: IntermediateOntology): LabelBox[] {
+  const perPx = unitsPerPixel([...at.values()]);
+  return data.node_types.filter((t) => at.has(t.name)).map((t) => boxAt(t.name, at.get(t.name)!, nodeSize(t.count), perPx));
+}
+
 /** The types' positions, the same every time for the same ontology: a force layout from a fixed start, each type
  * pulled towards its group's place on a circle, so the groups stay apart and a type sits near the types it links to. */
 export function layoutSchema(data: IntermediateOntology): Map<string, { x: number; y: number }> {
@@ -66,7 +91,44 @@ export function layoutSchema(data: IntermediateOntology): Map<string, { x: numbe
       p.y += move[i].y * scale;
     });
   }
+  separateLabels(names, data.node_types.map((t) => nodeSize(t.count)), pos);
   return new Map(names.map((name, i) => [name, { x: Math.round(pos[i].x * 1000) / 10, y: Math.round(pos[i].y * 1000) / 10 }]));
+}
+
+/** The force layout knows nothing of labels: two linked types of one group can sit closer than their labels are wide.
+ * Push every pair whose node-and-label boxes overlap apart along the axis that needs the shorter move, half each,
+ * in a fixed order, until none overlap (the same result every time). A pixel of margin stays between boxes, more
+ * than the rounding of the returned positions moves them. */
+function separateLabels(names: string[], radii: number[], pos: { x: number; y: number }[]): void {
+  for (let round = 0; round < 200; round++) {
+    const perPx = unitsPerPixel(pos);
+    const margin = perPx; // a pixel between boxes
+    const boxes = pos.map((p, i) => boxAt(names[i], p, radii[i], perPx));
+    let moved = false;
+    for (let a = 0; a < pos.length; a++) {
+      for (let b = a + 1; b < pos.length; b++) {
+        const across = Math.min(boxes[a].x2, boxes[b].x2) - Math.max(boxes[a].x1, boxes[b].x1);
+        const along = Math.min(boxes[a].y2, boxes[b].y2) - Math.max(boxes[a].y1, boxes[b].y1);
+        if (across <= -margin || along <= -margin) continue;
+        moved = true;
+        // The axis with less overlap (vertical on a tie); the first type moves up, or right, when the two are level
+        if (along <= across) {
+          const shift = (along + margin) / 2, up = pos[a].y >= pos[b].y ? 1 : -1;
+          pos[a].y += up * shift;
+          pos[b].y -= up * shift;
+          boxes[a] = boxAt(names[a], pos[a], radii[a], perPx);
+          boxes[b] = boxAt(names[b], pos[b], radii[b], perPx);
+        } else {
+          const shift = (across + margin) / 2, right = pos[a].x >= pos[b].x ? 1 : -1;
+          pos[a].x += right * shift;
+          pos[b].x -= right * shift;
+          boxes[a] = boxAt(names[a], pos[a], radii[a], perPx);
+          boxes[b] = boxAt(names[b], pos[b], radii[b], perPx);
+        }
+      }
+    }
+    if (!moved) return;
+  }
 }
 
 /** The intermediate ontology as a graph for anywidget-graph (layout "preset"): a node per type, an edge per pair of

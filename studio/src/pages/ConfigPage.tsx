@@ -1,9 +1,11 @@
-import { Fragment, useCallback, useEffect, useRef, useState } from "react";
+import { Fragment, lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
 
 import { configs } from "../api/client";
 import type { ConfigChange, ConfigRow, ConfigVersion, DryRunResult, ScanResult, StepType } from "../api/types";
-import { CodeEditor } from "../components/CodeEditor";
 import { lineDiff } from "../components/diff";
+
+// CodeMirror is most of the studio's code: it loads with the first editor shown, not with the studio
+const CodeEditor = lazy(() => import("../components/CodeEditor").then((m) => ({ default: m.CodeEditor })));
 
 type Props = { stepType: StepType; title: string };
 type Tab = "instruction" | "example" | "params" | "query" | "history";
@@ -129,7 +131,8 @@ function History({ stepType, name, draft, dirty, onStatus, onRestored }: History
               {v.is_active ? " · active" : ""}
               {v.enabled ? "" : " · off"}
             </span>
-            <span className="faint">{v.created_at?.slice(0, 16).replace("T", " ") ?? ""}</span>
+            {/* When the version was made (a shipped one keeps its own time, not when this database was seeded) */}
+            <span className="faint">{v.created_at ? `made ${v.created_at.slice(0, 16).replace("T", " ")}` : ""}</span>
           </button>
         ))}
       </div>
@@ -315,15 +318,23 @@ function StepEditor({ stepType, row, status, onStatus, onDirty, onSaved }: Edito
             </button>
           ))}
         </div>
-        {tab === "instruction" && <CodeEditor label="Instruction" readOnly={saving} value={draft.instruction} onChange={(v) => update("instruction", v)} />}
-        {tab === "example" && <CodeEditor label="Example" language="json" readOnly={saving} value={draft.example} onChange={(v) => update("example", v)} />}
-        {tab === "params" && <CodeEditor label="Params" language="json" readOnly={saving} value={draft.params} onChange={(v) => update("params", v)} />}
-        {tab === "query" && (
-          <>
-            <CodeEditor label="Candidate query" readOnly={saving} value={draft.query} onChange={(v) => update("query", v)} />
-            <DryRun name={row.name} query={changes.input_graph_query} />
-          </>
-        )}
+        <Suspense
+          fallback={
+            <div className="muted" role="status">
+              Loading the editor…
+            </div>
+          }
+        >
+          {tab === "instruction" && <CodeEditor label="Instruction" readOnly={saving} value={draft.instruction} onChange={(v) => update("instruction", v)} />}
+          {tab === "example" && <CodeEditor label="Example" language="json" readOnly={saving} value={draft.example} onChange={(v) => update("example", v)} />}
+          {tab === "params" && <CodeEditor label="Params" language="json" readOnly={saving} value={draft.params} onChange={(v) => update("params", v)} />}
+          {tab === "query" && (
+            <>
+              <CodeEditor label="Candidate query" readOnly={saving} value={draft.query} onChange={(v) => update("query", v)} />
+              <DryRun name={row.name} query={changes.input_graph_query} />
+            </>
+          )}
+        </Suspense>
         {tab === "history" && <History stepType={stepType} name={row.name} draft={draft} dirty={dirty} onStatus={onStatus} onRestored={onSaved} />}
         {findings && (
           <div className="findings" role="alert">

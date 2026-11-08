@@ -27,6 +27,7 @@ def test_compose_services_are_matched_to_units_by_build_context_image_or_name():
     result = detect_deployments("r", {"r/docker-compose.yml": COMPOSE}, UNITS, RULES)
 
     env = result.primary
+    assert env is not None
     assert (env.kind, env.name, env.file) == ("compose", "Docker Compose", "r/docker-compose.yml")
     by_name = {s.name: s for s in env.services}
     assert by_name["shop"].unit == "unit::r::shop" and by_name["shop"].depends_on == ["db"]
@@ -56,9 +57,22 @@ services:
   db:
     image: acme/suite:mysql
 """
-    services = {s.name: s.unit for s in detect_deployments("r", {"r/docker-compose.yml": compose}, units, RULES).primary.services}
+    env = detect_deployments("r", {"r/docker-compose.yml": compose}, units, RULES).primary
+    assert env is not None
+    services = {s.name: s.unit for s in env.services}
 
     assert services == {"order-store": "unit::r::OrderStore", "pay": "unit::r::services/PaymentDesk", "orders": None, "gateway": "unit::r::Gateway", "db": None}
+
+
+def test_a_unit_in_a_layout_folder_is_found_by_its_manifest_name():
+    """A unit whose folder is src/ is named by its project file: a workload that runs an image of that name deploys it."""
+    units = [{"id": "unit::r::ledgerservice/src", "path": "r/ledgerservice/src", "name": "src", "manifest": "ledgerservice"}]
+    manifest = "kind: Deployment\nmetadata:\n  name: ledgerservice\nspec:\n  template:\n    spec:\n      containers:\n        - image: ledgerservice\n"
+
+    env = detect_deployments("r", {"r/k8s/ledger.yaml": manifest}, units, RULES).primary
+    assert env is not None
+
+    assert [(s.name, s.unit) for s in env.services] == [("ledgerservice", "unit::r::ledgerservice/src")]
 
 
 def test_the_root_compose_is_the_primary_environment_and_the_others_are_reported():
@@ -70,6 +84,7 @@ def test_the_root_compose_is_the_primary_environment_and_the_others_are_reported
 
     result = detect_deployments("r", files, UNITS, RULES)
 
+    assert result.primary is not None
     assert result.primary.file == "r/docker-compose.yml"
     assert sorted((e.kind, e.file) for e in result.others) == [("compose", "r/examples/docker-compose_extra.yml"), ("kubernetes", "r/k8s")]
 
@@ -79,6 +94,7 @@ def test_kubernetes_workloads_are_an_environment_when_there_is_no_compose():
     files = {"r/k8s/shop.yaml": manifest + "---\nkind: Service\nmetadata:\n  name: shop\n"}
 
     env = detect_deployments("r", files, UNITS, RULES).primary
+    assert env is not None
 
     assert (env.kind, env.name) == ("kubernetes", "Kubernetes")
     assert [(s.name, s.unit, s.image) for s in env.services] == [("shop", "unit::r::shop", "acme/shop:3")]
@@ -91,6 +107,7 @@ def test_a_cloud_template_in_a_unit_folder_deploys_that_unit_and_names_its_manag
     )
 
     env = detect_deployments("r", {"r/shop/infra/cloudformation.yaml": template}, UNITS, RULES).primary
+    assert env is not None
 
     assert (env.kind, env.name) == ("cloud", "AWS ECS")
     assert [(s.name, s.unit, s.kind) for s in env.services] == [("App", "unit::r::shop", "container")]
@@ -156,6 +173,30 @@ CATALOG_ENTRIES = [
 ]
 
 
+def test_technologies_the_classification_names_join_the_system_software():
+    from deriva.modules.extraction.deployments import technology_layer
+    from deriva.modules.extraction.technologies import catalog_from_params
+
+    classified = (("Hosted PostgreSQL", ("r/shop/db.py",)), ("Queue Engine", ("r/services/billing/send.py", "r/other.py")))
+
+    layer = technology_layer("r", {}, UNITS, DeploymentRules(), catalog_from_params(CATALOG_ENTRIES), {}, classified=classified)
+    software = {s.name: s for s in layer.software}
+
+    # The closed list's own name inside the answer is that entry; a name off the list stays as written, not listed
+    assert sorted(software) == ["PostgreSQL", "Queue Engine"]
+    assert software["PostgreSQL"].listed and software["PostgreSQL"].kind == "database" and software["PostgreSQL"].serves == ["unit::r::shop"]
+    assert not software["Queue Engine"].listed and software["Queue Engine"].serves == ["unit::r::services/billing"]
+    assert software["PostgreSQL"].evidence == ["classified from 1 files"]
+    assert not software["PostgreSQL"].in_environment
+
+
+def test_without_classified_technologies_the_software_is_what_it_was():
+    from deriva.modules.extraction.deployments import technology_layer
+    from deriva.modules.extraction.technologies import catalog_from_params
+
+    assert technology_layer("r", {}, UNITS, DeploymentRules(), catalog_from_params(CATALOG_ENTRIES), {}).software == []
+
+
 def _layer(files, sources=None, units=UNITS):
     from deriva.modules.extraction.deployments import technology_layer
     from deriva.modules.extraction.technologies import catalog_from_params
@@ -193,6 +234,50 @@ def test_an_image_off_the_list_is_kept_as_fallback_software():
 
     [fallback] = layer.software
     assert (fallback.name, fallback.listed, fallback.in_environment, fallback.serves) == ("acme/keyvalue", False, True, ["unit::r::shop"])
+
+
+def test_an_image_off_the_list_takes_the_name_the_technology_labels_give_it():
+    """With the Technology step's image labels, an image off the list is the system its label names (on the list when
+    the name is), an image labelled none is no software, and an image without a label stays as before."""
+    from deriva.modules.extraction.deployments import technology_layer
+    from deriva.modules.extraction.technologies import catalog_from_params
+
+    compose = (
+        "services:\n  cache:\n    image: acme/keyvalue:2\n  ui:\n    image: acme/dbadmin:1\n  db:\n    image: acme/pgfork:15\n"
+        "  tool:\n    image: acme/other:3\n  shop:\n    build: ./shop\n    depends_on: [cache, db]\n"
+    )
+    labels = {"acme/keyvalue": "Key Value Store", "acme/dbadmin": "", "acme/pgfork": "Hosted PostgreSQL"}  # a name that holds an entry's name is it
+
+    layer = technology_layer("r", {"r/docker-compose.yml": compose}, UNITS, DeploymentRules(), catalog_from_params(CATALOG_ENTRIES), {}, image_labels=labels)
+    software = {s.name: s for s in layer.software}
+
+    assert sorted(software) == ["Key Value Store", "PostgreSQL", "acme/other"]
+    assert not software["Key Value Store"].listed and software["Key Value Store"].serves == ["unit::r::shop"]
+    assert software["PostgreSQL"].listed and software["PostgreSQL"].kind == "database"
+    assert software["acme/other"].kind == "fallback"
+    plain = technology_layer("r", {"r/docker-compose.yml": compose}, UNITS, DeploymentRules(), catalog_from_params(CATALOG_ENTRIES), {})
+    assert sorted(s.name for s in plain.software) == ["acme/dbadmin", "acme/keyvalue", "acme/other", "acme/pgfork"]
+
+
+def test_the_label_of_an_image_as_written_comes_before_the_label_of_the_image_it_is_built_on():
+    """A project-built image (acme/kv, FROM alpine) runs what its own label names; a written image labelled none, or
+    one without a label, is named as the image it is built on, as before."""
+    from deriva.modules.extraction.deployments import technology_layer
+    from deriva.modules.extraction.technologies import catalog_from_params
+
+    files = {
+        "r/docker-compose.yml": "services:\n  kv:\n    image: acme/kv\n  shop:\n    build: ./shop\n    depends_on: [kv]\n",
+        "r/kv/build.sh": "docker build -t acme/kv .\n",
+        "r/kv/Dockerfile": "FROM alpine:3.20\n",
+    }
+
+    def names(labels):
+        layer = technology_layer("r", files, UNITS, DeploymentRules(), catalog_from_params(CATALOG_ENTRIES), {}, image_labels=labels)
+        return sorted(s.name for s in layer.software)
+
+    assert names({"acme/kv": "Key Value Store", "alpine": ""}) == ["Key Value Store"]
+    assert names({"acme/kv": "", "alpine": "Alpine Linux"}) == ["Alpine Linux"]
+    assert names({"alpine": "Alpine Linux"}) == ["Alpine Linux"]
 
 
 def test_mainframe_subsystems_without_another_environment_make_a_mainframe_environment():
@@ -251,6 +336,7 @@ def test_compose_services_carry_their_published_and_container_ports():
     compose = 'services:\n  shop:\n    build: ./shop\n    ports: ["8080:80", "9000"]\n  db:\n    image: postgres\n    ports:\n      - "127.0.0.1:5432:5432"\n'
 
     env = detect_deployments("r", {"r/docker-compose.yml": compose}, UNITS, RULES).primary
+    assert env is not None
 
     assert {s.name: s.ports for s in env.services} == {"shop": [80, 8080, 9000], "db": [5432]}
 
@@ -272,6 +358,7 @@ def test_cdk_containers_are_matched_to_units_by_name_and_the_cloud_comes_before_
     result = detect_deployments("r", {"r/docker-compose.yml": COMPOSE}, UNITS, QUALIFIED, cdk=CDK)
 
     env = result.primary
+    assert env is not None
     assert (env.kind, env.name, env.file) == ("cloud", "AWS ECS Fargate", "r/infra/lib")  # the name the construct table gives
     assert [(s.name, s.unit) for s in env.services] == [("otherService", None), ("shopService", "unit::r::shop")]  # no unit named other
     assert env.managed == ["AWS::RDS::DBInstance::postgres"]  # the engine qualifies the managed service
@@ -285,6 +372,7 @@ def test_cloudformation_resources_are_qualified_by_their_property_or_its_default
     )
 
     env = detect_deployments("r", {"r/shop/infra/cloudformation.yaml": template}, UNITS, QUALIFIED).primary
+    assert env is not None
 
     # A load balancer without a Type is an application one; an engine that is no literal (a !Ref) qualifies nothing
     assert env.managed == ["AWS::ElasticLoadBalancingV2::LoadBalancer::application", "AWS::RDS::DBInstance::engineparameter"]
@@ -343,11 +431,14 @@ def test_an_engine_that_runs_in_the_environment_itself_stays_separate():
 def test_the_environment_folder_is_the_common_leading_part_of_its_files():
     """r/team-a/k8s and r/team-b/k8s share only r: a later equal folder name is no common folder."""
     manifest = "kind: Deployment\nmetadata:\n  name: {0}\nspec:\n  template:\n    spec:\n      containers:\n        - image: acme/{0}\n"
-    files = {"r/team-a/k8s/shop.yaml": manifest.format("shop"), "r/team-b/k8s/billing.yaml": manifest.format("billing")}
+    files: dict[str, str] = {"r/team-a/k8s/shop.yaml": manifest.format("shop"), "r/team-b/k8s/billing.yaml": manifest.format("billing")}
     template = "Resources:\n  App:\n    Type: AWS::ECS::Service\n"
 
-    assert detect_deployments("r", files, UNITS, RULES).primary.file == "r"
+    k8s = detect_deployments("r", files, UNITS, RULES).primary
+    assert k8s is not None
+    assert k8s.file == "r"
     cloud = detect_deployments("r", {"r/a/infra/t.yaml": template, "r/b/infra/t.yaml": template}, UNITS, RULES).primary
+    assert cloud is not None
     assert cloud.file == "r"
 
 
@@ -359,11 +450,89 @@ def test_a_registry_variable_before_the_image_name_is_dropped_with_its_slash():
     assert built_images("r", files, ("*.sh",)) == {"shop-base": "r/base/Dockerfile", "app": "r/Dockerfile"}
 
 
+def test_a_compose_build_from_the_root_context_is_matched_by_its_dockerfiles_folder():
+    """``context: .`` with ``dockerfile: src/web/Dockerfile`` builds the unit in src/web, under whatever image name."""
+    units = [{"id": "unit::r::web", "path": "r/src/web", "name": "web"}, {"id": "unit::r::api", "path": "r/src/api", "name": "api"}]
+    compose = (
+        "services:\n"
+        "  shopfront:\n    image: ${REGISTRY-}shopfront\n    build:\n      context: .\n      dockerfile: src/web/Dockerfile\n"
+        "  gateway:\n    build:\n      context: ./src\n      dockerfile: api/Dockerfile\n"
+        "  rootonly:\n    build:\n      context: ./src/web\n      dockerfile: Dockerfile\n"
+    )
+
+    env = detect_deployments("r", {"r/docker-compose.yml": compose}, units, RULES).primary
+
+    assert env is not None
+    by_name = {s.name: s.unit for s in env.services}
+    assert by_name == {"shopfront": "unit::r::web", "gateway": "unit::r::api", "rootonly": "unit::r::web"}
+
+
+def test_a_dockerfiles_folder_never_beats_a_context_name_or_image_match():
+    """Shared Dockerfiles live in a folder of their own: the unit there (or the only one below it) is not what they build."""
+    units = [
+        {"id": "unit::r::api", "path": "r/services/api", "name": "api"},
+        {"id": "unit::r::web", "path": "r/services/web", "name": "web"},
+        {"id": "unit::r::docker", "path": "r/docker", "name": "docker"},
+        {"id": "unit::r::gateway", "path": "r/edge/gateway", "name": "gateway"},
+    ]
+    compose = (
+        "services:\n"
+        "  first:\n    build:\n      context: ./services/api\n      dockerfile: ../../docker/api.Dockerfile\n"
+        "  web:\n    build:\n      context: .\n      dockerfile: docker/Dockerfile\n      target: web\n"
+        "  third:\n    image: acme/api\n    build:\n      context: .\n      dockerfile: edge/Dockerfile\n"
+    )
+
+    env = detect_deployments("r", {"r/docker-compose.yml": compose}, units, RULES).primary
+
+    assert env is not None
+    assert {s.name: s.unit for s in env.services} == {"first": "unit::r::api", "web": "unit::r::web", "third": "unit::r::api"}
+
+
+def test_a_services_own_dockerfile_beats_the_last_word_of_its_name_not_its_exact_name():
+    units = [
+        {"id": "unit::r::admin", "path": "r/src/admin", "name": "admin"},
+        {"id": "unit::r::web", "path": "r/src/web", "name": "web"},
+        {"id": "unit::r::api", "path": "r/src/api", "name": "api"},
+    ]
+    compose = (
+        "services:\n"
+        "  admin-web:\n    build:\n      context: .\n      dockerfile: src/admin/Dockerfile\n"
+        "  api:\n    build:\n      context: .\n      dockerfile: src/web/Dockerfile\n"
+        "  public-web:\n    build:\n      context: .\n      dockerfile: docker/Dockerfile\n"
+    )
+
+    env = detect_deployments("r", {"r/docker-compose.yml": compose}, units, RULES).primary
+
+    assert env is not None
+    assert {s.name: s.unit for s in env.services} == {"admin-web": "unit::r::admin", "api": "unit::r::api", "public-web": "unit::r::web"}
+
+
+def test_a_services_own_dockerfile_beats_the_last_word_of_its_image_too():
+    units = [
+        {"id": "unit::r::admin", "path": "r/src/admin", "name": "admin"},
+        {"id": "unit::r::web", "path": "r/src/web", "name": "web"},
+        {"id": "unit::r::api", "path": "r/src/api", "name": "api"},
+    ]
+    compose = (
+        "services:\n"
+        "  admin-web:\n    image: acme/admin-web\n    build:\n      context: .\n      dockerfile: src/admin/Dockerfile\n"
+        "  other:\n    image: acme/api\n    build:\n      context: .\n      dockerfile: src/web/Dockerfile\n"
+        "  third:\n    image: acme/public-web\n    build:\n      context: .\n      dockerfile: docker/Dockerfile\n"
+    )
+
+    env = detect_deployments("r", {"r/docker-compose.yml": compose}, units, RULES).primary
+
+    assert env is not None
+    # An image that names a unit exactly still wins; a guess from its last word comes after the Dockerfile's folder
+    assert {s.name: s.unit for s in env.services} == {"admin-web": "unit::r::admin", "other": "unit::r::api", "third": "unit::r::web"}
+
+
 def test_a_build_context_that_several_units_share_is_matched_by_name_or_not_at_all():
     units = [{"id": "unit::r::api", "path": "r/app", "name": "api"}, {"id": "unit::r::worker", "path": "r/app", "name": "worker"}]
     compose = "services:\n  worker:\n    build: ./app\n  jobs:\n    build: ./app\n"
 
     env = detect_deployments("r", {"r/docker-compose.yml": compose}, units, RULES).primary
+    assert env is not None
 
     assert {s.name: s.unit for s in env.services} == {"worker": "unit::r::worker", "jobs": None}
 
@@ -374,9 +543,11 @@ def test_managed_resources_without_a_container_still_make_a_cloud_environment():
     template = "Resources:\n  Fn:\n    Type: AWS::Lambda::Function\n  Files:\n    Type: AWS::S3::Bucket\n"
 
     alone = detect_deployments("r", {"r/infra/template.yaml": template}, UNITS, RULES)
+    assert alone.primary is not None
     assert (alone.primary.kind, alone.primary.services, alone.primary.managed) == ("cloud", [], ["AWS::Lambda::Function", "AWS::S3::Bucket"])
 
     with_compose = detect_deployments("r", {"r/infra/template.yaml": template, "r/docker-compose.yml": COMPOSE}, UNITS, RULES)
+    assert with_compose.primary is not None
     assert with_compose.primary.kind == "compose" and [e.kind for e in with_compose.others] == ["cloud"]
 
 
@@ -393,6 +564,7 @@ def test_a_bracketed_ipv6_host_is_no_port():
     compose = 'services:\n  db:\n    image: postgres\n    ports: ["[2001:1:2::1]:5432:80", "[::1]:9000:9000/tcp"]\n'
 
     env = detect_deployments("r", {"r/docker-compose.yml": compose}, UNITS, RULES).primary
+    assert env is not None
 
     assert env.services[0].ports == [80, 5432, 9000]
 
@@ -405,7 +577,9 @@ def test_secret_values_are_not_kept_but_hosts_are():
         "      TOKEN_URL: http://auth:8080/token\n      CLIENT_SECRET: ${CLIENT_SECRET}\n      MODE: prod\n"
     )
 
-    (shop,) = detect_deployments("r", {"r/docker-compose.yml": compose}, UNITS, RULES).primary.services
+    env = detect_deployments("r", {"r/docker-compose.yml": compose}, UNITS, RULES).primary
+    assert env is not None
+    (shop,) = env.services
 
     assert shop.environment == {
         "DB_PASSWORD": "***",
@@ -430,6 +604,7 @@ def test_a_unit_only_a_variant_of_the_primary_file_deploys_is_variant_only():
 
     result = detect_deployments("r", files, units, RULES)
 
+    assert result.primary is not None
     assert result.primary.file == "r/docker-compose.yml"
     assert [e.file for e in result.variants] == ["r/docker-compose_metrics.yml"]
     assert result.variant_units == ["unit::r::probe"]
@@ -453,8 +628,10 @@ def test_the_compose_file_with_the_tools_default_name_is_primary_over_a_variant_
 
     result = detect_deployments("r", files, units, RULES)
 
+    assert result.primary is not None
     assert result.primary.file == "r/docker-compose.yml" and result.variant_units == ["unit::r::probe"]
     both = detect_deployments("r", {**files, "r/compose.yaml": COMPOSE}, units, RULES)
+    assert both.primary is not None
     assert both.primary.file == "r/compose.yaml"
 
 
@@ -468,6 +645,7 @@ def test_the_override_file_compose_merges_by_default_is_part_of_the_primary_not_
 
     result = detect_deployments("r", files, units, RULES)
 
+    assert result.primary is not None
     assert result.primary.file == "r/docker-compose.yml"
     assert [e.file for e in result.variants] == ["r/docker-compose_metrics.yml"] and result.variant_units == ["unit::r::probe"]
 
@@ -483,7 +661,9 @@ def test_an_environment_that_runs_the_systems_own_units_is_primary_before_one_th
     }
 
     before = detect_deployments("r", files, UNITS, RULES).primary
+    assert before is not None
     after = detect_deployments("r", files, UNITS, dataclasses.replace(RULES, primary_runs_units=True)).primary
+    assert after is not None
 
     assert before.kind == "compose"
     assert (after.kind, [(s.name, s.unit) for s in after.services]) == ("kubernetes", [("shop", "unit::r::shop")])
@@ -497,4 +677,119 @@ def test_with_primary_runs_units_a_compose_file_that_runs_units_stays_primary():
         "r/k8s/shop.yaml": "kind: Deployment\nmetadata:\n  name: shop\nspec:\n  template:\n    spec:\n      containers:\n        - image: acme/shop\n",
     }
 
-    assert detect_deployments("r", files, UNITS, dataclasses.replace(RULES, primary_runs_units=True)).primary.file == "r/docker-compose.yml"
+    env = detect_deployments("r", files, UNITS, dataclasses.replace(RULES, primary_runs_units=True)).primary
+    assert env is not None
+    assert env.file == "r/docker-compose.yml"
+
+
+def test_a_dockerfile_path_with_backslashes_finds_its_folder():
+    from deriva.modules.extraction.deployments import _compose, _Units
+
+    units = _Units([{"id": "unit::web", "path": "r/src/web", "name": "front", "members": []}, {"id": "unit::api", "path": "r/src/api", "name": "back", "members": []}])
+    text = "services:\n  shop:\n    build:\n      context: .\n      dockerfile: 'src\\web\\Dockerfile'\n"
+    environment = _compose("r/docker-compose.yml", text, units, DeploymentRules())
+    assert environment is not None and environment.services[0].unit == "unit::web"
+
+
+# .NET Aspire: an app host declares the projects it runs and the resources they reference
+ASPIRE = DeploymentRules(
+    aspire_host="DistributedApplication.CreateBuilder",
+    aspire_suffixes=(".cs",),
+    aspire_projects=("AddProject", "AddDotnetProject"),
+    aspire_resource="Add",
+    aspire_references=("WithReference",),
+)
+APP_HOST = """
+var builder = DistributedApplication.CreateBuilder(args);
+
+builder.AddCloudEnvironment("cloud");
+var cache = builder.AddKeyValue("cache");
+var postgres = builder.AddPostgres("postgres")
+    .WithLifetime(ContainerLifetime.Persistent);
+var shopDb = postgres.AddDatabase("shopdb");
+
+// builder.AddProject<Projects.Old>("old");
+var shop = builder.AddProject<Projects.Shop_Api>("shop-api", o => o.LaunchProfileName = "https")
+    .WithReference(shopDb)
+    .WithEnvironment("Url", "https://example.org/x;y");
+builder.AddDotnetProject("billing", "../services/billing")
+    .WithReference(shop);
+shop.WithReference(cache);
+
+builder.Build().Run();
+"""
+ASPIRE_UNITS = [
+    {"id": "unit::r::shop", "path": "r/shop", "name": "shop", "manifest": "Shop.Api"},
+    {"id": "unit::r::services/billing", "path": "r/services/billing", "name": "billing"},
+    {"id": "unit::r::host", "path": "r/host", "name": "host", "manifest": "Shop.AppHost"},
+]
+
+
+def test_an_aspire_app_host_is_an_environment_that_runs_its_projects_and_resources():
+    result = detect_deployments("r", {"r/host/AppHost.cs": APP_HOST}, ASPIRE_UNITS, ASPIRE)
+
+    env = result.primary
+    assert env is not None and (env.kind, env.name, env.file) == ("aspire", "Aspire", "r/host/AppHost.cs")
+    by_name = {s.name: s for s in env.services}
+    # A project by its manifest name (Projects.Shop_Api is Shop.Api) or by its path from the host's folder; the commented one is none
+    assert by_name["shop-api"].unit == "unit::r::shop" and by_name["billing"].unit == "unit::r::services/billing"
+    assert "old" not in by_name
+    # A resource is its technology; a database added to it is a part of it, so a reference to the database uses the resource
+    assert (by_name["postgres"].unit, by_name["postgres"].image, by_name["postgres"].kind) == (None, "postgres", "resource")
+    assert by_name["cache"].image == "keyvalue" and "shopdb" not in by_name
+    assert by_name["shop-api"].depends_on == ["cache", "postgres"]  # a reference later in the file counts too
+    assert by_name["billing"].depends_on == ["shop-api"]
+
+
+def test_a_project_without_a_written_name_is_named_after_its_project_type():
+    host = "var builder = DistributedApplication.CreateBuilder(args);\nbuilder\n    .AddProject<Projects.Shop_Api>(nameof(Projects.Shop_Api).ToLower());\n"
+
+    env = detect_deployments("r", {"r/host/AppHost.cs": host}, ASPIRE_UNITS, ASPIRE).primary
+
+    assert env is not None and [(s.name, s.unit) for s in env.services] == [("Shop_Api", "unit::r::shop")]
+
+
+def test_a_file_without_the_host_call_or_without_aspire_rules_is_no_environment():
+    assert detect_deployments("r", {"r/host/AppHost.cs": APP_HOST.replace("DistributedApplication.CreateBuilder", "Other.Create")}, ASPIRE_UNITS, ASPIRE).primary is None
+    assert detect_deployments("r", {"r/host/AppHost.cs": APP_HOST}, ASPIRE_UNITS, DeploymentRules()).primary is None
+
+
+def test_a_compose_file_ranks_before_an_aspire_app_host():
+    result = detect_deployments("r", {"r/host/AppHost.cs": APP_HOST, "r/docker-compose.yml": COMPOSE}, ASPIRE_UNITS, ASPIRE)
+
+    assert result.primary is not None and result.primary.kind == "compose"
+    assert [e.kind for e in result.others] == ["aspire"]
+
+
+def test_aspire_resources_are_software_only_on_the_closed_list_and_serve_the_projects_that_reference_them():
+    from deriva.modules.extraction.deployments import technology_layer
+    from deriva.modules.extraction.technologies import catalog_from_params
+
+    layer = technology_layer("r", {"r/host/AppHost.cs": APP_HOST}, ASPIRE_UNITS, ASPIRE, catalog_from_params(CATALOG_ENTRIES), {})
+
+    assert layer.environment is not None and layer.environment.kind == "aspire"
+    assert layer.deployed == ["unit::r::services/billing", "unit::r::shop"]
+    # The cloud environment and the key-value resource are no entry of the list: no fallback software for a resource
+    [postgres] = layer.software
+    assert (postgres.name, postgres.in_environment, postgres.serves) == ("PostgreSQL", True, ["unit::r::shop"])
+    assert postgres.evidence == ["resource postgres"]
+
+
+def test_an_aspire_project_type_names_its_project_file_whatever_the_unit_is_called():
+    """Aspire names Projects.X after the project file (Shop.Api.csproj is Projects.Shop_Api); a unit whose folder, name
+    and assembly name all differ from it is still found by the project file among its members."""
+    units = [
+        {
+            "id": "unit::r::storefront",
+            "path": "r/storefront",
+            "name": "Storefront",
+            "manifest": "Acme.Sales.Assembly",
+            "members": ["r/storefront/Shop.Api.csproj", "r/storefront/Program.cs"],
+        },
+        {"id": "unit::r::billing", "path": "r/billing", "name": "billing", "manifest": "Billing", "members": ["r/billing/Billing.csproj"]},
+    ]
+    host = 'var builder = DistributedApplication.CreateBuilder(args);\nbuilder.AddProject<Projects.Shop_Api>("shop");\n'
+
+    env = detect_deployments("r", {"r/host/AppHost.cs": host}, units, ASPIRE).primary
+
+    assert env is not None and [(s.name, s.unit) for s in env.services] == [("shop", "unit::r::storefront")]

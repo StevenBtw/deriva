@@ -287,7 +287,7 @@ class DerivationConfig(TypedDict):
     """Configuration for a derivation step."""
 
     element_type: str  # Target ArchiMate type
-    input_graph_query: str  # Cypher query to get source nodes
+    input_graph_query: str  # Graph query (GQL by default) to get source nodes
     instruction: str  # LLM instruction
     example: str  # Example output JSON
 

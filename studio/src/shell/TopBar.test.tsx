@@ -38,6 +38,9 @@ describe("TopBar", () => {
 
     const label = screen.getByText("Studio not answering");
     expect(label).toHaveAttribute("title", expect.stringMatching(/last known state: owned/));
+    // Its dot is a warning, not the last known state's green
+    expect(label).toHaveClass("db-unanswered");
+    expect(label).not.toHaveClass("db-owned");
     expect(screen.queryByText("DB not connected")).not.toBeInTheDocument();
   });
 
@@ -105,6 +108,14 @@ describe("Banner", () => {
     render(<Banner db={{ state: "held", held_by: 241896 }} />);
 
     expect(screen.getByRole("status")).toHaveTextContent("241896");
+  });
+
+  it("says the studio is not reachable before anything it last knew, a held database included", () => {
+    render(<Banner db={{ state: "held", held_by: 7, unanswered: true }} />);
+
+    expect(screen.getByRole("alert")).toHaveTextContent(/The studio is not reachable/);
+    // The last known state may be out of date: the held notice waits until the studio answers again
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
   });
 
   it("says a pipeline step is running when the status reports the session busy", () => {

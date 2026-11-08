@@ -28,6 +28,7 @@ from deriva.common import (
     extract_llm_details,
     parse_json_array,
 )
+from deriva.common.exceptions import RunStopped
 from deriva.common.naming import singularize
 from deriva.common.types import LLMDetails, PipelineResult
 
@@ -335,20 +336,23 @@ MAX_SAMPLE_WORKERS = 8
 def sample_llm(llm_query_fn: Callable[..., Any], prompt: str, schema: dict[str, Any], samples: int) -> list[Any]:
     """Ask the same prompt ``samples`` times (in parallel) and return the answers in call order.
 
-    Used to stabilize open LLM extraction by majority vote. A call that raises
-    yields ``None`` so one failed sample does not lose the others.
+    Used to stabilize open LLM extraction by majority vote. Each sample is numbered (``sample=i``), so it has its own
+    cache entry and a replay votes over the answers the run got. A call that raises yields ``None`` so one failed
+    sample does not lose the others.
     """
     if samples <= 1:
         return [llm_query_fn(prompt, schema)]
 
-    def _call() -> Any:
+    def _call(index: int) -> Any:
         try:
-            return llm_query_fn(prompt, schema)
+            return llm_query_fn(prompt, schema, sample=index)
+        except RunStopped:
+            raise
         except Exception:  # noqa: BLE001 - a failed sample is simply not counted
             return None
 
     with ThreadPoolExecutor(max_workers=min(samples, MAX_SAMPLE_WORKERS)) as pool:
-        return list(pool.map(lambda _: _call(), range(samples)))
+        return list(pool.map(_call, range(samples)))
 
 
 def sample_usage(responses: list[Any]) -> tuple[int, int]:
@@ -558,6 +562,13 @@ REDUNDANT_SUFFIXES = [
 # =============================================================================
 
 
+def dependency_node_id(repo_name: str, name: str) -> str:
+    """The graph id of an external dependency: one rule for a manifest's name and for the package an import resolves to,
+    so both are one node. The id comes from the canonical name (``normalize_package_name``: torch is PyTorch), which a
+    manifest's node is stored under; case, and "-", ".", "/" and spaces, do not tell names apart."""
+    return f"extdep::{repo_name}::{re.sub(r'[-./\s]', '_', normalize_package_name(name).lower())}"
+
+
 def normalize_package_name(name: str) -> str:
     """
     Normalize a package/dependency name to its canonical form.
@@ -614,8 +625,7 @@ def normalize_node(node: dict[str, Any], node_type: str, repo_name: str | None =
 
     # Update node_id if name changed and we have repo_name
     if node_type == "ExternalDependency" and "dependencyName" in props and repo_name:
-        name_slug = props["dependencyName"].lower().replace("-", "_").replace(" ", "_").replace("/", "_")
-        node_copy["node_id"] = f"extdep::{repo_name}::{name_slug}"
+        node_copy["node_id"] = dependency_node_id(repo_name, props["dependencyName"])
 
     return node_copy
 

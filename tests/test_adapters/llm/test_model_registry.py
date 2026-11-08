@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pytest
 from pydantic_ai.models import infer_model
+from pydantic_ai.models.openai import OpenAIChatModel
 
 from deriva.adapters.llm.model_registry import get_pydantic_ai_model
 
@@ -31,6 +32,7 @@ def test_without_a_key_the_providers_environment_variable_still_applies(no_provi
 
     assert resolved.model_name == "devstral-2512"
     assert str(resolved.base_url).rstrip("/") == "https://api.mistral.ai/v1"
+    assert isinstance(resolved, OpenAIChatModel)
     assert resolved.client.api_key == "sk-env-0000"
 
 
@@ -101,6 +103,7 @@ def test_an_azure_v1_url_uses_the_openai_compatible_client_without_an_api_versio
     v1 = get_pydantic_ai_model({"provider": "azure", "model": "gpt-5-mini", "api_url": "https://res.openai.azure.com/openai/v1/", "api_key": "k"})
     root = get_pydantic_ai_model({"provider": "azure", "model": "gpt-5-mini", "api_url": "https://res.openai.azure.com/", "api_key": "k"})
 
+    assert isinstance(v1, OpenAIChatModel) and isinstance(root, OpenAIChatModel)
     assert isinstance(v1._provider, OpenAIProvider) and not isinstance(v1._provider, AzureProvider)
     assert str(v1._provider.base_url).rstrip("/") == "https://res.openai.azure.com/openai/v1"
     assert isinstance(root._provider, AzureProvider)

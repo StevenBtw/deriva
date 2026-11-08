@@ -128,9 +128,12 @@ export function ofTotal(shown: number, total: number | undefined, one: string, m
   return total !== undefined && total > shown ? `${formatCount(shown)} of ${formatCount(total)} ${many}` : countOf(shown, one, many);
 }
 
-/** The counts of a separate graph pane: nodes and edges, against the totals of a sampled graph. */
-export function viewNote(view: GraphView): string {
-  return `${ofTotal(view.nodes.length, sumOf(view.totals?.nodes), "node", "nodes")} · ${ofTotal(view.edges.length, sumOf(view.totals?.edges), "edge", "edges")}`;
+/** The counts of a separate graph pane: the nodes and edges it draws (``drawn``: also a typed query's result; the
+ * view's own until the widget reports), against the totals of a sampled graph. */
+export function viewNote(view: GraphView, drawn?: { nodes: number; edges: number }): string {
+  const nodes = drawn?.nodes ?? view.nodes.length;
+  const edges = drawn?.edges ?? view.edges.length;
+  return `${ofTotal(nodes, sumOf(view.totals?.nodes), "node", "nodes")} · ${ofTotal(edges, sumOf(view.totals?.edges), "edge", "edges")}`;
 }
 
 /** The counts of the linked view: repositories, the (sampled) intermediate graph and its edges, the elements and how many are in the model. */
@@ -140,10 +143,11 @@ export function linkedNote(view: LinkedView): string {
   const output = inLane("output");
   const onGraph = new Set(view.nodes.filter((node) => node.lane !== "output").map((node) => node.id));
   const graphEdges = view.edges.filter((edge) => !edge.cross && onGraph.has(edge.source) && onGraph.has(edge.target)).length;
-  // Repositories are always shown whole, so the intermediate graph's total is the graph's total without them
+  // Graph nodes are the whole graph, its repositories included: the scope of the edges here (which include the
+  // repositories' edges) and of the Repositories page's counts, so one graph reads the same everywhere
   const totalNodes = sumOf(view.totals?.nodes);
   const totalEdges = sumOf(view.totals?.edges);
-  const parts = [countOf(repositories, "repository", "repositories"), ofTotal(inLane("intermediate").length, totalNodes === undefined ? undefined : totalNodes - repositories, "graph node", "graph nodes")];
+  const parts = [countOf(repositories, "repository", "repositories"), ofTotal(onGraph.size, totalNodes, "graph node", "graph nodes")];
   if (graphEdges || totalEdges !== undefined) parts.push(ofTotal(graphEdges, totalEdges, "edge", "edges"));
   const valid = output.filter(inModel).length;
   const elements = countOf(output.length, "element", "elements");

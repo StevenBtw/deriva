@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from typing import Any, cast
 from unittest.mock import MagicMock
 
 from deriva.modules.extraction.method import (
@@ -31,18 +32,19 @@ class TestMethodSchema:
 
     def test_schema_has_methods_array(self):
         """Should define methods array in schema."""
-        assert "properties" in METHOD_SCHEMA["schema"]  # type: ignore[operator]
-        assert "methods" in METHOD_SCHEMA["schema"]["properties"]  # type: ignore[operator]
+        schema = cast("dict[str, Any]", METHOD_SCHEMA["schema"])
+        assert "properties" in schema
+        assert "methods" in schema["properties"]
 
     def test_methods_item_has_required_fields(self):
         """Method items should have required fields."""
-        method_schema = METHOD_SCHEMA["schema"]["properties"]["methods"]["items"]  # type: ignore[index]
-        required = method_schema["required"]  # type: ignore[index]
+        method_schema = cast("dict[str, Any]", METHOD_SCHEMA["schema"])["properties"]["methods"]["items"]
+        required = method_schema["required"]
 
-        assert "methodName" in required  # type: ignore[operator]
-        assert "returnType" in required  # type: ignore[operator]
-        assert "visibility" in required  # type: ignore[operator]
-        assert "parameters" in required  # type: ignore[operator]
+        assert "methodName" in required
+        assert "returnType" in required
+        assert "visibility" in required
+        assert "parameters" in required
 
 
 class TestBuildExtractionPrompt:
@@ -435,6 +437,15 @@ class TestExtractMethodsBatch:
 
 class TestExtractMethodsFromSource:
     """Tests for extract_methods_from_source function."""
+
+    def test_a_go_method_belongs_to_its_type_declared_in_another_file_of_the_package(self):
+        """Go puts a method's receiver type anywhere in the package (its folder): the edge starts at the type's file."""
+        source = "package frontend\n\nfunc (s *server) homeHandler() {}\n\nfunc (s *local) ping() {}\n"
+
+        result = extract_methods_from_source("src/frontend/handlers.go", source, "r", type_files={"server": "src/frontend/main.go"})
+
+        sources = sorted(e["from_node_id"] for e in result["data"]["edges"])
+        assert sources == ["typedef::r::src_frontend_handlers.go::local", "typedef::r::src_frontend_main.go::server"]
 
     def test_extracts_python_methods(self):
         """Should extract methods from Python source."""

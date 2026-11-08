@@ -45,3 +45,43 @@ def test_a_numbered_reference_is_not_a_concept(pipelines):
     terms = _terms(pipelines, "en", "As shown in figure 4, the invoice is approved.")
 
     assert ("noun", "figure") not in terms
+
+
+def _with(pipelines, text, **settings):
+    doc = pipelines["en"](text)
+    return {(o.kind, " ".join(o.words)) for o in extract_occurrences(doc, "en", 0, Settings(**settings), frozenset())}
+
+
+def test_the_reader_settings_change_nothing_unless_set(pipelines):
+    text = "The frontend allows Front-Desk clerks to apply for a permit and read legal notices."
+
+    assert _with(pipelines, text) == {("noun", "frontend"), ("noun", "clerk"), ("noun", "permit"), ("noun", "notice"), ("verb", "read notice")}
+
+
+def test_capitalised_words_count_as_nouns(pipelines):
+    assert ("noun", "help desk clerk") in _with(pipelines, "The frontend allows Help-Desk clerks to interact.", noun_proper=True, noun_hyphens=True)
+    assert ("noun", "help") not in _with(pipelines, "The frontend allows Help-Desk clerks to interact.", noun_proper=True, noun_hyphens=True)
+    assert ("noun", "desk clerk") in _with(pipelines, "The frontend allows Help-Desk clerks to interact.", noun_proper=True)
+
+
+def test_a_verb_takes_an_object_through_a_listed_preposition(pipelines):
+    found = _with(pipelines, "Members can apply for a permit and read of the report.", verb_prepositions=("for", "to"))
+
+    assert ("verb", "apply for permit") in found
+    assert not [term for kind, term in found if kind == "verb" and " of " in term]
+
+
+def test_a_passage_that_opens_with_a_verb_the_tagger_missed_is_read_as_one(pipelines):
+    assert ("verb", "inspect machine") in _with(pipelines, "Inspect your first machine", leading_verbs=True)
+    assert ("verb", "print to archive") in _with(pipelines, "Print to the archive", leading_verbs=True, verb_prepositions=("to",))
+    # A plain noun phrase with a preposition that is not listed stays a noun phrase
+    assert not [term for kind, term in _with(pipelines, "Design of the system", leading_verbs=True, verb_prepositions=("to",)) if kind == "verb"]
+
+
+def test_settings_read_a_json_list_of_prepositions():
+    assert Settings.from_dict({"verb_prepositions": ["for", "to"]}).verb_prepositions == ("for", "to")
+
+
+def test_a_verb_with_a_preposition_keeps_coordinated_objects(pipelines):
+    found = _with(pipelines, "Members can apply for a permit or a license.", verb_prepositions=("for",))
+    assert ("verb", "apply for permit") in found and ("verb", "apply for license") in found
