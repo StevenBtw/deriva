@@ -1,0 +1,83 @@
+/* docs.deriva.dev: the site's own rules on top of the generated template (extra.css, never edited
+   by hand). The Notebook identity: STIX Two Text for all text, IBM Plex Mono for code and labels. */
+
+body,
+input,
+.md-nav,
+.md-tabs,
+.md-search__input,
+.md-footer,
+.md-source,
+.md-typeset {
+  font-family: "STIX Two Text", Georgia, serif;
+}
+.md-typeset {
+  font-size: 0.9rem;
+  line-height: 1.7;
+}
+.md-typeset h1,
+.md-typeset h2,
+.md-typeset h3,
+.md-header__title,
+.md-typeset .grid.cards strong {
+  font-family: "STIX Two Text", Georgia, serif;
+  font-weight: 500;
+  letter-spacing: 0;
+}
+.md-typeset h1 {
+  font-size: 2.4em;
+}
+
+/* Code stays smaller than the reading size, so long commands fit */
+.md-typeset code,
+.md-typeset pre code {
+  font-size: 0.8em;
+}
+
+/* The logo follows the site's toggle, not the system: light mode shows the light mark, as a
+   background (replacing an <img> through the content property does not work in every browser) */
+[data-md-color-scheme="default"] .md-logo img {
+  visibility: hidden;
+}
+[data-md-color-scheme="default"] .md-logo {
+  background-image: url("../assets/logo-light.svg");
+  background-repeat: no-repeat;
+  background-position: center;
+  background-size: 1.2rem 1.2rem;
+}
+
+/* Small uppercase label above a group, as on deriva.dev */
+.md-typeset .kicker {
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-size: 0.7rem;
+  color: var(--md-accent-fg-color);
+  margin-bottom: -0.6em;
+}
+
+/* Overview cards: hairline, crisp corners, no shadow; the border turns accent on hover */
+.md-typeset .grid.cards > ul > li {
+  border: 1px solid var(--md-default-fg-color--lightest);
+  border-radius: var(--radius-box, 3px);
+  box-shadow: none;
+  transition: border-color 160ms ease, transform 160ms ease;
+}
+.md-typeset .grid.cards > ul > li:hover,
+.md-typeset .grid.cards > ul > li:focus-within {
+  border-color: var(--md-accent-fg-color);
+  transform: translateY(-1px);
+  box-shadow: none;
+}
+.md-typeset .grid.cards strong {
+  font-size: 1.15em;
+}
+@media (prefers-reduced-motion: reduce) {
+  .md-typeset .grid.cards > ul > li {
+    transition: none;
+  }
+  .md-typeset .grid.cards > ul > li:hover,
+  .md-typeset .grid.cards > ul > li:focus-within {
+    transform: none;
+  }
+}

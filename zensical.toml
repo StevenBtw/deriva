@@ -1,0 +1,86 @@
+# docs.deriva.dev: built with Zensical from docs/ (uv run --group docs zensical build --strict)
+# and published to GitHub Pages by .github/workflows/docs.yml on every push to main.
+# The look is the Deriva identity: docs/stylesheets/extra.css and the font and palette blocks
+# below are generated from the Deriva design tokens (do not edit them by hand); the site's own
+# rules live in docs/stylesheets/deriva.css.
+
+[project]
+site_name = "Deriva"
+site_description = "Deriva reads a code repository and builds an ArchiMate model of its architecture."
+site_url = "https://docs.deriva.dev/"
+repo_url = "https://github.com/StevenBtw/Deriva"
+repo_name = "StevenBtw/Deriva"
+docs_dir = "docs"
+extra_css = ["stylesheets/extra.css", "stylesheets/deriva.css"]
+nav = [
+  { "Overview" = "index.md" },
+  { "Get started" = "get-started.md" },
+  { "Use Deriva" = [
+    { "Studio" = "studio.md" },
+    { "CLI" = "cli.md" },
+    { "Configuration" = "configuration.md" },
+    { "Data and queries" = "data.md" },
+    { "How-tos" = "how-tos.md" },
+    { "Troubleshooting" = "troubleshooting.md" },
+  ] },
+  { "Understand" = [
+    { "ArchiMate" = "archimate.md" },
+    { "Architecture" = "architecture.md" },
+  ] },
+  { "Tune" = [
+    { "Benchmarking" = "benchmarks.md" },
+    { "Optimization" = "optimization.md" },
+  ] },
+  { "Contribute" = "contributing.md" },
+  { "Changelog" = "changelog.md" },
+]
+
+# No "Made with Zensical" line in the footer
+[project.extra]
+generator = false
+
+[project.theme]
+logo = "assets/logo.svg"
+favicon = "assets/favicon.svg"
+font = false  # fonts are self-hosted: docs/stylesheets/extra.css and fonts/, nothing from Google
+features = [
+  "navigation.tabs",
+  "navigation.sections",
+  "navigation.top",
+  "navigation.footer",
+  "toc.follow",
+  "search.suggest",
+  "search.highlight",
+  "content.code.copy",
+]
+
+# Sites open in dark; the toggle switches to light and the choice is remembered.
+[[project.theme.palette]]
+scheme = "slate"
+primary = "custom"
+accent = "custom"
+toggle.icon = "lucide/moon"
+toggle.name = "Switch to light mode"
+
+[[project.theme.palette]]
+scheme = "default"
+primary = "custom"
+accent = "custom"
+toggle.icon = "lucide/sun"
+toggle.name = "Switch to dark mode"
+
+[project.markdown_extensions]
+admonition = {}
+attr_list = {}
+md_in_html = {}
+tables = {}
+toc.permalink = true
+pymdownx.details = {}
+pymdownx.highlight.anchor_linenums = true
+pymdownx.highlight.pygments_lang_class = true
+pymdownx.inlinehilite = {}
+pymdownx.mark = {}
+pymdownx.snippets.base_path = ["."]
+pymdownx.superfences.custom_fences = [
+  { name = "mermaid", class = "mermaid", format = "pymdownx.superfences.fence_code_format" },
+]

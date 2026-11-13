@@ -6,16 +6,14 @@ Deriva reads a software repository, builds a graph of what is in it, and derives
 
 ```bash
 uv tool install --python 3.14 deriva-studio
-deriva
 ```
 
-Or try it without installing: `uvx --python 3.14 deriva-studio`.
+Then run `deriva`. Installing, connecting an LLM and deriving a first model are in the documentation: https://docs.deriva.dev/get-started/
 
 - Includes the command line tool `deriva-cli`; benchmarking comes with [deriva-dev](https://pypi.org/project/deriva-dev/).
 - Runs locally: the studio listens on this machine only, and nothing leaves it except the prompts to the LLM you configure (cloud or local). Those prompts can hold content of the repository you analyse (names, paths, documentation and code excerpts).
-- Keeps its files in `~/.deriva` (`DERIVA_HOME` moves it).
 - Install it as a tool or in its own environment: its Python package is named `deriva`, like ISI's `deriva-py`, and the two cannot share an environment.
 
-Documentation: https://docs.deriva.dev. Source and releases: https://github.com/StevenBtw/deriva
+Source and releases: https://github.com/StevenBtw/deriva
 
 Deriva is part of a research project on AI-assisted domain modeling. License: AGPL-3.0-or-later.
