@@ -2,6 +2,37 @@
 
 All notable changes to Deriva, which derives ArchiMate models from code with knowledge graphs, heuristics and LLMs: a record of architectural decisions, resets, and a lot of trial and error.
 
+## [0.9.1] - Unreleased
+
+Studio look and docs release: Deriva Studio takes the Deriva identity, opens in dark and reads in IBM Plex Mono, and the documentation moves to docs.deriva.dev, built from this repository.
+
+### Studio
+
+- **Studio opens in dark**: the theme toggle switches between dark and light and remembers the choice; it no longer follows the system setting.
+- **Studio uses the Deriva identity**: teal-tinted greys in both themes (cool greys before), IBM Plex Mono at 13px with line height 1.6, 3px panels and 6px controls. Primary buttons are filled `#2a7680` with white text.
+- **The linked view shows the whole flow**: the repository links to the roots of its sampled folders and files, so lines run from the repository into the intermediate graph (none were drawn before).
+- **The intermediate graph takes its own shape**: it is laid out without a hard edge, so its outline follows the graph's structure, and nodes of one Louvain cluster pull together (needs anywidget-graph with `free` and `group` lanes).
+- **Colour by cluster**: a Type or Cluster switch over the linked view; Cluster colours the eight largest Louvain clusters with the anywidget data palette and the rest grey.
+- **Rank filter**: All, Top 50% or Top 20% hides intermediate nodes below that PageRank percentile; the elements' sources always stay. `/grafeo/view/linked` takes `min_rank`.
+- **Menu icons from the Deriva mark**: Repositories, Intermediate ontology and Output ontology show the mark with their pipeline stage's ring at full strength, in the accent colour on the active page. Workspace, the start page, has a home icon; both config pages share the pen icon.
+- **The model is exported from Studio**: a new Model group in the menu opens Export config, which saves the model as an ArchiMate exchange file under a chosen name (a timestamped name is suggested). It shows the full path before saving, warns when a file would be replaced, and lists the exports already in `workspace/output`.
+- **The Run button takes the brand colour**: it is filled `#2a7680` like every primary action; green stays a status colour.
+- **The DB indicator shows its details**: on hover or keyboard focus, the Grafeo and DuckDB versions and the graph database's state. `/api/status` reports the versions as `engines`.
+- **Top bar links respond to the pointer**: API, GitHub and Report issue get a background and an accent icon on hover and focus.
+
+### Fixes
+
+- **Switching repository renames its node**: the linked view showed the previous repository's name on the repository node until a reload; a node whose name changed is now redrawn in place.
+- **Artifacts sit in the technology row**: in the linked view, element types without a layer in their name (Artifact, Communication Network, Path, the Physical types; Contract, Representation and Product in business) take their layer's row and colour instead of a palette colour outside the rows.
+- **Headings are crisp**: Studio ships IBM Plex Mono SemiBold and draws headings and strong labels in it; before, the browser faked a bold from the medium weight, which read blurry.
+- **Temperatures read as set**: the Prompts tab and the benchmark trace show `temperature 0.3` instead of the stored float32 value `0.30000001192092896`.
+
+### Development
+
+- **The docs are published from this repository**: docs.deriva.dev is built with Zensical from `docs/` and published to GitHub Pages on every push to `main` that changes it; pull requests build it with `--strict`. Its fonts are served by the site itself; nothing loads from Google Fonts.
+- **Install and usage moved into the docs**: the install guide, Studio, CLI, configuration, data and troubleshooting live on docs.deriva.dev; the README and the PyPI READMEs keep one install line and a link.
+- **Studio's palette comes from the design tokens**: `node studio/scripts/sync-design-tokens.mjs <tokens.json>` rewrites the colour block in `studio/src/theme/tokens.css` from the deriva-studio tokens.
+
 ## [0.9.0] - 2026-11-08
 
 Hardening release: Deriva is safe to run on untrusted repositories, the bugs found since 0.8.10 are fixed, and the default configuration covers more kinds of repositories (Go, TypeScript, .NET, gRPC). Some changes alter derived models; use 0.8.10 for its exact output. Changes to the shipped configuration reach a new database; an existing one keeps its versions until they are updated.
