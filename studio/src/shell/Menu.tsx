@@ -1,14 +1,16 @@
-import { useState } from "react";
+import { type ReactNode, useState } from "react";
 import { NavLink } from "react-router-dom";
 
-type Entry = { to: string; icon: string; label: string };
+import { HomeIcon, RingIcon } from "./RingIcon";
+
+type Entry = { to: string; icon: ReactNode; label: string };
 
 const GROUPS: { title: string | null; entries: Entry[] }[] = [
-  { title: null, entries: [{ to: "/", icon: "◉", label: "Workspace" }] },
+  { title: null, entries: [{ to: "/", icon: <HomeIcon />, label: "Workspace" }] },
   {
     title: "Sources",
     entries: [
-      { to: "/repositories", icon: "▣", label: "Repositories" },
+      { to: "/repositories", icon: <RingIcon stage="outer" />, label: "Repositories" },
       { to: "/general", icon: "▤", label: "General & file types" },
       { to: "/storage", icon: "▦", label: "Runs & storage" },
     ],
@@ -16,16 +18,20 @@ const GROUPS: { title: string | null; entries: Entry[] }[] = [
   {
     title: "Intermediate",
     entries: [
-      { to: "/ontology/intermediate", icon: "◇", label: "Intermediate ontology" },
+      { to: "/ontology/intermediate", icon: <RingIcon stage="second" />, label: "Intermediate ontology" },
       { to: "/config/extraction", icon: "✎", label: "Extraction config" },
     ],
   },
   {
     title: "Output",
     entries: [
-      { to: "/ontology/output", icon: "◆", label: "Output ontology" },
-      { to: "/config/derivation", icon: "⇄", label: "Derivation config" },
+      { to: "/ontology/output", icon: <RingIcon stage="inner" />, label: "Output ontology" },
+      { to: "/config/derivation", icon: "✎", label: "Derivation config" },
     ],
+  },
+  {
+    title: "Model",
+    entries: [{ to: "/config/export", icon: <RingIcon stage="core" />, label: "Export config" }],
   },
 ];
 
