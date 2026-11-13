@@ -2,6 +2,7 @@ import { useState } from "react";
 
 import { runs } from "../api/client";
 import type { LlmCall, RunEvent } from "../api/types";
+import { decimal } from "../components/number";
 
 /** What a call row shows: from a live ``llm`` event or from a listed call. */
 export type CallFacts = {
@@ -28,7 +29,7 @@ function facts(d: CallFacts): string[] {
   const tokens = d.tokens_in == null ? "tokens not recorded" : `${number.format(d.tokens_in)} tokens in`;
   const cache = d.cache_hit == null ? "cache not recorded" : d.cache_hit ? "cache hit" : "cache miss";
   const parts = d.cache_hit ? [d.step ?? "no step", cache] : [d.step ?? "no step", tokens, milliseconds(d.latency_ms), cache];
-  if (d.temperature != null) parts.push(`temperature ${d.temperature}`);
+  if (d.temperature != null) parts.push(`temperature ${decimal(d.temperature)}`);
   return d.error ? [...parts, `error: ${d.error}`] : parts;
 }
 

@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 
+import { decimal } from "../components/number";
 import { benchmarks } from "../api/client";
 import type { ElementTrace as Trace, RunTraceCall } from "../api/types";
 import type { Item } from "./inspect";
@@ -13,7 +14,7 @@ function verdict(t: Trace): string {
 function Call({ call }: { call: RunTraceCall }) {
   const [open, setOpen] = useState<"prompt" | "answer" | null>(null);
   const toggle = (part: "prompt" | "answer") => setOpen((current) => (current === part ? null : part));
-  const facts = [call.step ?? "no step", call.schema, call.model, call.temperature != null ? `temperature ${call.temperature}` : null, call.cache_hit ? "cache hit" : "cache miss"];
+  const facts = [call.step ?? "no step", call.schema, call.model, call.temperature != null ? `temperature ${decimal(call.temperature)}` : null, call.cache_hit ? "cache hit" : "cache miss"];
   return (
     <div className="logline">
       <span className="k">◆</span>
