@@ -221,3 +221,18 @@ def test_model_quality_answers_the_session_s_verdict(make_client):
 
     assert client.get("/api/model/quality").json() == report
     assert session.called("model_quality") == [((), {})]
+
+
+def test_the_exports_route_lists_the_folder_its_files_and_a_suggested_name(make_client):
+    import re
+
+    listed = {"folder": "/home/workspace/output", "files": [{"name": "model.xml", "bytes": 10, "modified": 1_000}]}
+    session = FakeSession(list_exports=lambda: listed)
+    session.repository = "deriva"
+    client = make_client(session)
+
+    body = client.get("/api/model/exports").json()
+
+    assert body["folder"] == "/home/workspace/output"
+    assert body["files"] == listed["files"]
+    assert re.fullmatch(r"deriva-\d{8}-\d{6}\.xml", body["suggested"])

@@ -289,6 +289,10 @@ class PipelineSession:
             self._llm_manager = None
         return storage.clear_llm_cache()
 
+    def list_exports(self) -> dict[str, Any]:
+        """The exported exchange files in workspace/output, newest first, and that folder."""
+        return storage.list_exports()
+
     def delete_exports(self) -> dict[str, int]:
         """Delete the exported exchange files in workspace/output."""
         return storage.delete_exports()

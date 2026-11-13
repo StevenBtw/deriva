@@ -108,6 +108,14 @@ def download_model(session: Any = Depends(get_session)) -> FileResponse:
     return FileResponse(result["output_path"], media_type="application/xml", filename=name)
 
 
+@router.get("/model/exports")
+def model_exports(session: Any = Depends(get_session)) -> dict[str, Any]:
+    """The exchange files already in workspace/output (newest first), that folder, and a name for the next export
+    (the repository and the time, as the download uses)."""
+    repository = session.repository if isinstance(getattr(session, "repository", None), str) else "model"
+    return {**session.list_exports(), "suggested": f"{repository}-{datetime.now():%Y%m%d-%H%M%S}.xml"}
+
+
 @router.post("/model/export")
 def export_model(request: ExportRequest, session: Any = Depends(get_session)) -> dict[str, Any]:
     """Export the model as XML into the home folder's workspace/output (a request names the file, not a place)."""

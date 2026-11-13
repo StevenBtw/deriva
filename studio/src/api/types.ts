@@ -10,7 +10,9 @@ export type DbStatus = {
 };
 
 /** `features` lists optional parts of the install; `environment` is the machine the server runs on. Both are absent on older servers. */
-export type Status = { version: string; db: DbStatus; features?: { benchmark?: boolean }; environment?: { os?: string; python?: string } };
+/** `engines`: the installed DuckDB and Grafeo versions (absent on older servers). */
+export type Engines = { duckdb?: string | null; grafeo?: string | null };
+export type Status = { version: string; db: DbStatus; features?: { benchmark?: boolean }; environment?: { os?: string; python?: string }; engines?: Engines };
 
 export type Repository = {
   name: string;
@@ -85,6 +87,11 @@ export type StorageOverview = {
   runs: { runs: number; bytes: number };
 };
 
+/** The exchange files in workspace/output (newest first), that folder, and a name for the next export. */
+export type ModelExports = { folder: string; suggested: string; files: { name: string; bytes: number; modified: number }[] };
+/** What an export wrote (or why it did not). */
+export type ExportResult = { success: boolean; output_path?: string; error?: string; elements_exported?: number; relationships_exported?: number; views_exported?: number };
+
 export type FileType = { extension: string; file_type: string; subtype: string };
 
 export type StepType = "extraction" | "derivation";
@@ -138,6 +145,10 @@ export type Lane = {
   glyph?: string[];
   caption?: string;
   layout?: "force";
+  // No hard edge: the graph's structure and the centring pull decide its outline (anywidget-graph 0.5.4)
+  free?: boolean;
+  // A node field whose groups pull together in the layout, so clusters show (anywidget-graph 0.5.4)
+  group?: string;
   // Rows top to bottom by a node field's value (`order`); other values go to a row below them
   rows?: { field: string; order: string[] };
   // Lay the lane out again when one batch adds or removes more than this share of its nodes
