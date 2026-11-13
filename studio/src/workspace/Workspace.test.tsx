@@ -69,6 +69,7 @@ vi.mock("../widgets/LinkedGraphWidget", () => ({
           {batch?.remove ? `${batch.remove.nodes.join(",")}|${batch.remove.edges.map((e) => `${e.source}>${e.target}`).join(",")}` : ""}
         </span>
         <span data-testid="linked-pulse">{pulse.join(",")}</span>
+        <span data-testid="linked-coloured">{view.nodes.filter((n) => "color" in n).map((n) => n.id).join(",")}</span>
       </div>
     );
   },
@@ -140,6 +141,19 @@ describe("Workspace", () => {
     vi.mocked(runs.calls).mockResolvedValue([]);
     widget.features = [];
     vi.mocked(model.get).mockResolvedValue({ elements: [{ id: "n1", name: "Application Server", type: "Node", layer: "Technology", documentation: "" }], relationships: [] });
+  });
+
+  it("filters the linked view by rank and colours its intermediate graph by cluster", async () => {
+    render(<Workspace />);
+    await screen.findByTestId("linked");
+    expect(graph.linked).toHaveBeenLastCalledWith(undefined, undefined);
+
+    await userEvent.click(screen.getByRole("button", { name: "Top 20%" }));
+    await waitFor(() => expect(graph.linked).toHaveBeenLastCalledWith(undefined, 80));
+
+    expect(screen.getByTestId("linked-coloured")).toHaveTextContent("");
+    await userEvent.click(screen.getByRole("button", { name: "Cluster" }));
+    expect(screen.getByTestId("linked-coloured")).toHaveTextContent("10");
   });
 
   it("lists the studio's recent runs with kind, repository and status", async () => {
@@ -606,6 +620,9 @@ describe("Workspace", () => {
     // The temperature the call ran with, where the log records it
     act(() => handlers.onEvent?.(llm(3, "c3", { temperature: 0 })));
     expect(within(log).getByText(/LLM #3 · .* · cache miss · temperature 0/)).toBeInTheDocument();
+    // A temperature stored as float32 reads as the value that was set, not its binary expansion
+    act(() => handlers.onEvent?.(llm(4, "c4", { temperature: 0.30000001192092896 })));
+    expect(within(log).getByText(/LLM #4 · .* · cache miss · temperature 0\.3$/)).toBeInTheDocument();
 
     await userEvent.click(within(log).getAllByRole("button", { name: /prompt/ })[0]);
 

@@ -30,10 +30,15 @@ export function inModel(node: WidgetNode): boolean {
   return node.enabled !== false;
 }
 
-/** The nodes of `next` whose place in the model changed since `shown` (refine rejected or restored them), in their new state. */
+/** The nodes of `next` that changed since `shown` (refine rejected or restored an element; a node was renamed), in their new state. */
 export function changedElements(shown: LinkedView, next: LinkedView): WidgetNode[] {
-  const before = new Map(shown.nodes.map((node) => [node.id, inModel(node)]));
-  return next.nodes.filter((node) => before.has(node.id) && before.get(node.id) !== inModel(node));
+  // An element that entered or left the model, or any node whose label changed (another repository's root keeps its
+  // id but not its name): sent again, the widget updates it where it is
+  const before = new Map(shown.nodes.map((node) => [node.id, node]));
+  return next.nodes.filter((node) => {
+    const old = before.get(node.id);
+    return old !== undefined && (inModel(old) !== inModel(node) || old.label !== node.label);
+  });
 }
 
 /** Whether the lanes differ (a second repository renames the repository lane): the studio reloads instead of appending. */
@@ -65,15 +70,47 @@ export function themeFromTokens(style: Pick<CSSStyleDeclaration, "getPropertyVal
   return { background: token("--bg"), panel: token("--bg2"), text: token("--text"), muted: token("--muted"), border: token("--line"), accent: token("--accent") };
 }
 
+/** The eight cluster colours (the anywidget data palette, --cluster-1..8) and the colour for every other cluster. */
+export function clusterPaletteFromTokens(style: Pick<CSSStyleDeclaration, "getPropertyValue">): { palette: string[]; other: string } {
+  const token = (name: string) => style.getPropertyValue(name).trim();
+  return { palette: [1, 2, 3, 4, 5, 6, 7, 8].map((n) => token(`--cluster-${n}`)), other: token("--faint") };
+}
+
+/**
+ * The intermediate graph coloured by Louvain cluster: the eight largest clusters take the palette in order of size,
+ * every other cluster (and a node without one) the `other` colour. A palette is never cycled, so a ninth cluster is
+ * "other", not a repeated colour. Output-lane nodes keep their layer colours.
+ */
+export function withClusterColors(nodes: WidgetNode[], palette: string[], other: string): WidgetNode[] {
+  const sizes = new Map<string, number>();
+  for (const node of nodes) {
+    const cluster = node.lane === "intermediate" ? node.louvain_community : undefined;
+    if (cluster !== undefined && cluster !== null) sizes.set(String(cluster), (sizes.get(String(cluster)) ?? 0) + 1);
+  }
+  const ranked = [...sizes].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).slice(0, palette.length);
+  const colourOf = new Map(ranked.map(([cluster], i) => [cluster, palette[i]]));
+  return nodes.map((node) => {
+    if (node.lane !== "intermediate") return node;
+    const cluster = node.louvain_community;
+    return { ...node, color: (cluster !== undefined && cluster !== null && colourOf.get(String(cluster))) || other };
+  });
+}
+
 /** ArchiMate layer colours in mid tones that read on the dark and the light ground (a theme switch keeps them). */
 export const LAYER_COLORS = { business: "#e8c547", application: "#5fb0e8", technology: "#7cc96b" } as const;
 
-const TECHNOLOGY_TYPES = new Set(["Node", "Device", "SystemSoftware", "TechnologyService"]);
+// ArchiMate 3.2 types whose name carries no layer prefix (Physical elements belong to Technology)
+const BUSINESS_TYPES = new Set(["Contract", "Representation", "Product"]);
+const APPLICATION_TYPES = new Set(["DataObject"]);
+const TECHNOLOGY_TYPES = new Set([
+  "Node", "Device", "SystemSoftware", "CommunicationNetwork", "Path", "Artifact",
+  "Equipment", "Facility", "DistributionNetwork", "Material",
+]);
 
 function layerOf(type: string): keyof typeof LAYER_COLORS | null {
-  if (type.startsWith("Business")) return "business";
-  if (type.startsWith("Application") || type === "DataObject") return "application";
-  if (TECHNOLOGY_TYPES.has(type) || type.startsWith("Technology")) return "technology";
+  if (type.startsWith("Business") || BUSINESS_TYPES.has(type)) return "business";
+  if (type.startsWith("Application") || APPLICATION_TYPES.has(type)) return "application";
+  if (type.startsWith("Technology") || TECHNOLOGY_TYPES.has(type)) return "technology";
   return null;
 }
 
@@ -166,7 +203,7 @@ const RELAYOUT_SHARE = 0.33;
  */
 export function withLaneLayouts(lanes: Lane[]): Lane[] {
   return lanes.map((lane) => {
-    if (lane.id === "intermediate") return { ...lane, layout: "force", relayout: RELAYOUT_SHARE, width: 1.6, labels: { count: 12 } };
+    if (lane.id === "intermediate") return { ...lane, layout: "force", free: true, group: "louvain_community", relayout: RELAYOUT_SHARE, width: 1.6, labels: { count: 12 } };
     if (lane.id === "output") {
       return { ...lane, rows: { field: "layer", order: ["business", "application", "technology"] }, relayout: RELAYOUT_SHARE, labels: { count: 16 } };
     }

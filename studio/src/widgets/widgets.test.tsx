@@ -38,6 +38,9 @@ describe("GraphWidget", () => {
     expect(model.get("show_labels")).toBe(true);
     // A typed query draws at most as many nodes as the view (anywidget-graph 0.5.2 and later)
     expect(model.get("max_query_nodes")).toBe(300);
+    // The studio's views are fixed: no layout menu, no 2D/3D switch (anywidget-graph 1.0)
+    expect(model.get("show_layout_menu")).toBe(false);
+    expect(model.get("show_view_toggle")).toBe(false);
   });
 
   it("updates nodes and edges when the view changes", async () => {
@@ -188,6 +191,8 @@ describe("ArchimateWidget", () => {
 
     await waitFor(() => expect(models).toHaveLength(1));
     expect(models[0].get("elements")).toEqual(elements);
+    // Studio shows the selection in its own panel, so the widget's details panel stays closed
+    expect(models[0].get("show_details")).toBe(false);
     models[0].set("selected_element", { id: "n1", name: "Application Server" });
     models[0].save_changes();
     expect(onSelect).toHaveBeenCalledWith({ id: "n1", name: "Application Server" });
@@ -227,6 +232,9 @@ describe("LinkedGraphWidget", () => {
     expect(models[0].get("theme")).toHaveProperty("accent");
     expect(models[0].get("show_query_input")).toBe(false);
     expect(models[0].get("show_labels")).toBe(true);
+    // The lanes are a fixed view: no layout menu, no 2D/3D switch (anywidget-graph 1.0)
+    expect(models[0].get("show_layout_menu")).toBe(false);
+    expect(models[0].get("show_view_toggle")).toBe(false);
   });
 
   it("sends append batches and pulse ids, and a theme change without reloading nodes", async () => {

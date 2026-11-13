@@ -111,17 +111,18 @@ def _graph_view(session: Any, budget: int, first_ids: list[str] | None = None, k
 
 
 @router.get("/view/linked")
-def linked_view(limit: int | None = None, session: Any = Depends(get_session)) -> dict[str, Any]:
+def linked_view(limit: int | None = None, min_rank: float | None = None, session: Any = Depends(get_session)) -> dict[str, Any]:
     """The intermediate graph and the output graph as two lanes, with each element linked to its source nodes.
 
     The output graph (rejected elements too) and the repositories are always shown; the rest of ``limit`` (the
     graph_view_nodes setting when not given) samples the intermediate graph, starting from the elements' sources. A
-    model larger than the limit still gets its sources (up to the limit), so its links stay.
+    model larger than the limit still gets its sources (up to the limit), so its links stay. ``min_rank`` (a PageRank
+    percentile, 0 to 100) hides the graph nodes ranked below it, except the elements' sources.
     """
     limit = limit if limit is not None else session.graph_view_nodes()
     model = _model_view(session, rejected=True)
     sources = sorted({source for node in model["nodes"] for source in element_sources(node)})
-    return build_linked_view(model, _graph_view(session, limit - len(model["nodes"]), first_ids=sources, keep_first=limit))
+    return build_linked_view(model, _graph_view(session, limit - len(model["nodes"]), first_ids=sources, keep_first=limit), min_rank=min_rank)
 
 
 @router.get("/view/{database}")

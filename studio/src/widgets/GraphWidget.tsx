@@ -49,6 +49,9 @@ export function GraphWidget({ database, view, typeColors, dark, height = 420, lo
       show_labels: true,
       show_toolbar: true,
       show_settings: true,
+      // The studio's views are fixed: no layout menu, no 2D/3D switch (anywidget-graph 1.0; older builds ignore them)
+      show_layout_menu: false,
+      show_view_toggle: false,
       max_nodes: 300,
       // A typed query draws its best-connected 300 nodes and says so (anywidget-graph 0.5.2; earlier builds ignore it)
       max_query_nodes: 300,

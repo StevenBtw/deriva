@@ -18,7 +18,8 @@ export function ArchimateWidget({ elements, relationships, dark, height = 620, o
   const { ref, model, error } = useWidget(
     "/widgets/anywidget-archimate/index.js",
     "/widgets/anywidget-archimate/styles.css",
-    () => ({ elements, relationships, width: "100%", height, dark_mode: dark, selected_element: null }),
+    // show_details false: the model panel shows the selected element itself (anywidget-archimate 1.0)
+    () => ({ elements, relationships, width: "100%", height, dark_mode: dark, selected_element: null, show_details: false }),
     loader,
   );
   const select = useRef(onSelect);
