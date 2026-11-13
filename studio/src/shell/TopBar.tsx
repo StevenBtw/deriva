@@ -1,11 +1,11 @@
-import type { DbStatus } from "../api/types";
+import type { DbStatus, Engines } from "../api/types";
 import { nextTheme, useTheme } from "../theme/theme";
 import { GITHUB_URL, detectBrowser, detectOs, newIssueUrl } from "./issueReport";
 import { Logo } from "./Logo";
 
 export type Mode = "run" | "benchmark";
 
-const THEME_LABEL = { system: "System", light: "Light", dark: "Dark" } as const;
+const THEME_LABEL = { light: "Light", dark: "Dark" } as const;
 
 type Props = {
   mode: Mode;
@@ -16,12 +16,14 @@ type Props = {
   benchmark?: boolean;
   /** The machine the studio server runs on (from /api/status); the browser is detected here. */
   environment?: { os?: string; python?: string };
+  /** The installed DuckDB and Grafeo versions (from /api/status), shown in the DB details. */
+  engines?: Engines;
   status?: string;
   onOpenDocs?: () => void;
   onOpenLlm?: () => void;
 };
 
-export function TopBar({ mode, onModeChange, db, version, benchmark = true, environment, status, onOpenDocs, onOpenLlm }: Props) {
+export function TopBar({ mode, onModeChange, db, version, benchmark = true, environment, engines, status, onOpenDocs, onOpenLlm }: Props) {
   const [theme, setTheme] = useTheme();
   const dbLabel = db.unanswered
     ? "Studio not answering"
@@ -33,6 +35,7 @@ export function TopBar({ mode, onModeChange, db, version, benchmark = true, envi
           ? `DB held (PID ${db.held_by ?? "?"})`
           : "DB not connected";
   const dbTitle = db.unanswered ? `The studio did not answer its last status request; last known state: ${db.state}` : (db.error ?? undefined);
+  const graphState = db.unanswered ? "not answering" : db.busy ? "busy" : db.state === "owned" ? "connected" : db.state === "held" ? `held by PID ${db.held_by ?? "?"}` : "not connected";
   /** A new bug report with what this install knows about itself pre-filled. */
   const issueUrl = newIssueUrl({
     version,
@@ -85,9 +88,22 @@ export function TopBar({ mode, onModeChange, db, version, benchmark = true, envi
           <BugIcon />
           Report issue
         </a>
-        <span className={`util db-${db.unanswered ? "unanswered" : db.state}`} title={dbTitle}>
-          <span className="dot" aria-hidden="true" />
-          {dbLabel}
+        <span className="db-host">
+          <button type="button" className={`util db db-${db.unanswered ? "unanswered" : db.state}`} aria-describedby="db-details">
+            <span className="dot" aria-hidden="true" />
+            {dbLabel}
+          </button>
+          <span role="tooltip" id="db-details" className="db-details">
+            <span className="db-row">
+              <span className="db-name">Grafeo {engines?.grafeo ?? "?"}</span>
+              <span className="db-role">graph database · {graphState}</span>
+            </span>
+            <span className="db-row">
+              <span className="db-name">DuckDB {engines?.duckdb ?? "?"}</span>
+              <span className="db-role">configuration store</span>
+            </span>
+            {dbTitle && <span className="db-note">{dbTitle}</span>}
+          </span>
         </span>
       </div>
     </header>

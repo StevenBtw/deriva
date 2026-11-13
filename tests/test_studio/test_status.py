@@ -149,3 +149,11 @@ def test_a_graph_held_by_another_process_is_held_and_no_session_is_kept():
     assert raised.value.pid is None and "x.grafeo is open in another Deriva process" in str(raised.value)
     assert provider.status()["state"] == "held"
     assert provider._session is None
+
+
+def test_status_reports_the_database_engines_and_their_versions(client):
+    from importlib.metadata import version
+
+    engines = client.get("/api/status").json()["engines"]
+
+    assert engines == {"duckdb": version("duckdb"), "grafeo": version("grafeo")}

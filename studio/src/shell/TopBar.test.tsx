@@ -18,6 +18,18 @@ describe("TopBar", () => {
     expect(document.documentElement.dataset.theme).toBe("dark");
   });
 
+  it("shows the database engines, their versions and the graph database state in the DB details", () => {
+    render(<TopBar mode="run" onModeChange={() => {}} db={{ state: "owned" }} engines={{ duckdb: "2.1.0", grafeo: "0.6.3" }} />);
+
+    const details = screen.getByRole("tooltip");
+    expect(details).toHaveTextContent("Grafeo 0.6.3");
+    expect(details).toHaveTextContent("graph database · connected");
+    expect(details).toHaveTextContent("DuckDB 2.1.0");
+    expect(details).toHaveTextContent("configuration store");
+    // The indicator can take keyboard focus, so the details are not hover-only
+    expect(screen.getByRole("button", { name: /^DB/ })).toHaveAttribute("aria-describedby", details.id);
+  });
+
   it("switches between run and benchmark mode", async () => {
     const changes: string[] = [];
     render(<TopBar mode="run" onModeChange={(m) => changes.push(m)} db={{ state: "owned" }} />);
@@ -37,7 +49,8 @@ describe("TopBar", () => {
     render(<TopBar mode="run" onModeChange={() => {}} db={{ state: "owned", unanswered: true }} />);
 
     const label = screen.getByText("Studio not answering");
-    expect(label).toHaveAttribute("title", expect.stringMatching(/last known state: owned/));
+    // The explanation is in the DB details (hover or focus), not a native title
+    expect(screen.getByRole("tooltip")).toHaveTextContent(/last known state: owned/);
     // Its dot is a warning, not the last known state's green
     expect(label).toHaveClass("db-unanswered");
     expect(label).not.toHaveClass("db-owned");
