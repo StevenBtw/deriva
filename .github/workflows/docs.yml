@@ -1,14 +1,13 @@
 name: docs
 
 # docs.deriva.dev: built with Zensical from docs/ and published to GitHub Pages on every push to
-# main that changes a docs source (the docs include README, CONTRIBUTING and CHANGELOG), or by hand
+# main that changes a docs source (the docs include CONTRIBUTING and CHANGELOG), or by hand
 on:
   push:
     branches: [main]
     paths:
       - "docs/**"
       - "zensical.toml"
-      - "README.md"
       - "CONTRIBUTING.md"
       - "CHANGELOG.md"
       - "pyproject.toml"
