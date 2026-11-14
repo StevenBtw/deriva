@@ -27,5 +27,5 @@ def status(request: Request) -> dict[str, Any]:
     except DatabaseHeld:
         pass
     except SessionBusy:
-        return {"version": request.app.version, "db": {**provider.status(), "busy": True}, "features": about.features(), "environment": environment}
-    return {"version": request.app.version, "db": provider.status(), "features": about.features(), "environment": environment}
+        return {"version": request.app.version, "db": {**provider.status(), "busy": True}, "features": about.features(), "environment": environment, "engines": about.engines()}
+    return {"version": request.app.version, "db": provider.status(), "features": about.features(), "environment": environment, "engines": about.engines()}

@@ -1,0 +1,73 @@
+name: docs
+
+# docs.deriva.dev: built with Zensical from docs/ and published to GitHub Pages on every push to
+# main that changes a docs source (the docs include README, CONTRIBUTING and CHANGELOG), or by hand
+on:
+  push:
+    branches: [main]
+    paths:
+      - "docs/**"
+      - "zensical.toml"
+      - "README.md"
+      - "CONTRIBUTING.md"
+      - "CHANGELOG.md"
+      - "pyproject.toml"
+      - "uv.lock"
+      - ".github/workflows/docs.yml"
+  workflow_dispatch:
+
+# Building and deploying are separate jobs, each with only the permission it needs
+permissions: {}
+
+# One Pages deployment at a time; a newer push waits instead of cancelling one in flight
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+env:
+  PYTHON_VERSION: "3.14"
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          version: "latest"
+          enable-cache: true
+
+      - name: Set up Python
+        run: uv python install ${{ env.PYTHON_VERSION }}
+
+      - name: Build the docs
+        run: uv run --only-group docs zensical build --strict
+
+      - name: Set up Pages
+        uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0
+
+      - name: Upload the site
+        uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+        with:
+          path: site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1

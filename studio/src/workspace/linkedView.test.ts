@@ -16,6 +16,7 @@ import {
   themeFromTokens,
   toWidgetIds,
   typeColors,
+  withClusterColors,
   withLaneLayouts,
   withLayerColors,
   withModelLane,
@@ -70,6 +71,12 @@ describe("linked view diff", () => {
     const shown: LinkedView = { ...view([], []), nodes: [{ id: "1", enabled: true }, { id: "2" }, { id: "3", enabled: false }] };
     const next: LinkedView = { ...view([], []), nodes: [{ id: "1", enabled: false }, { id: "2" }, { id: "3", enabled: false }, { id: "4", enabled: false }] };
     expect(changedElements(shown, next)).toEqual([{ id: "1", enabled: false }]);
+  });
+
+  it("a node whose label changed goes again too (another repository's root keeps its id but not its name)", () => {
+    const shown: LinkedView = { ...view([], []), nodes: [{ id: "9", lane: "repository", label: "LakesideMutual" }, { id: "10", label: "src" }] };
+    const next: LinkedView = { ...view([], []), nodes: [{ id: "9", lane: "repository", label: "deriva" }, { id: "10", label: "src" }] };
+    expect(changedElements(shown, next)).toEqual([{ id: "9", lane: "repository", label: "deriva" }]);
   });
 });
 
@@ -198,7 +205,7 @@ describe("lanes", () => {
   it("spreads the intermediate graph with forces and stacks the output lane by layer, business on top", () => {
     const laid = withLaneLayouts([{ id: "repository", title: "Repository", arrange: "column" }, ...view.lanes]);
     const lane = (id: string) => laid.find((l) => l.id === id);
-    expect(lane("intermediate")).toMatchObject({ layout: "force", relayout: 0.33, width: 1.6, labels: { count: 12 } });
+    expect(lane("intermediate")).toMatchObject({ layout: "force", free: true, group: "louvain_community", relayout: 0.33, width: 1.6, labels: { count: 12 } });
     expect(lane("output")).toMatchObject({ rows: { field: "layer", order: ["business", "application", "technology"] }, relayout: 0.33, labels: { count: 16 } });
     expect(lane("output")?.width).toBeUndefined();
     expect(lane("repository")).toEqual({ id: "repository", title: "Repository", arrange: "column" });
@@ -207,5 +214,34 @@ describe("lanes", () => {
   it("notices changed lanes (a second repository renames the repository lane)", () => {
     expect(lanesChanged(view, { ...view, lanes: [{ id: "repository", title: "Repositories" }, ...lanes] })).toBe(true);
     expect(lanesChanged(view, { ...view })).toBe(false);
+  });
+
+  it("colours the eight largest clusters of the intermediate graph in palette order, the rest in the 'other' colour", () => {
+    const palette = ["#c1", "#c2", "#c3", "#c4", "#c5", "#c6", "#c7", "#c8"];
+    // cluster k has 10 - k nodes, so clusters 0..7 are the eight largest and 8, 9 fall to "other"
+    const nodes = Array.from({ length: 10 }, (_, k) => Array.from({ length: 10 - k }, (_, i) => ({ id: `n${k}-${i}`, lane: "intermediate", louvain_community: `c${k}` }))).flat();
+    const output = { id: "e1", lane: "output", louvain_community: "c0" };
+    const coloured = withClusterColors([...nodes, output, { id: "loose", lane: "intermediate" }], palette, "#other");
+    const colour = (id: string) => coloured.find((n) => n.id === id)?.color;
+
+    expect(colour("n0-0")).toBe("#c1");
+    expect(colour("n7-0")).toBe("#c8");
+    expect(colour("n8-0")).toBe("#other");
+    expect(colour("loose")).toBe("#other");
+    // only the intermediate lane: elements keep their layer colours
+    expect(colour("e1")).toBeUndefined();
+  });
+});
+
+describe("layers of the ArchiMate types without a layer prefix", () => {
+  it("puts artifacts, networks and physical types in technology, contracts and products in business", () => {
+    const types = ["Artifact", "CommunicationNetwork", "Path", "Equipment", "Facility", "DistributionNetwork", "Material", "Contract", "Representation", "Product", "DataObject"];
+    const placed = withLayerColors(types.map((type, i) => ({ id: String(i), lane: "output", labels: [type] })));
+    expect(placed.map((n) => n.layer)).toEqual([
+      "technology", "technology", "technology", "technology", "technology", "technology", "technology",
+      "business", "business", "business", "application",
+    ]);
+    expect(placed[0].color).toBe(LAYER_COLORS.technology);
+    expect(typeColors(placed, true).nodes.Artifact).toBe(LAYER_COLORS.technology);
   });
 });

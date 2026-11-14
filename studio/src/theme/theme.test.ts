@@ -4,35 +4,29 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { effectiveTheme, getTheme, nextTheme, setTheme, useTheme } from "./theme";
 
 describe("theme", () => {
-  afterEach(() => vi.restoreAllMocks());
-
-  it("defaults to the system preference", () => {
-    vi.spyOn(window, "matchMedia").mockReturnValue({ matches: true } as MediaQueryList);
-
-    expect(getTheme()).toBe("system");
-    expect(effectiveTheme()).toBe("dark");
+  afterEach(() => {
+    vi.restoreAllMocks();
+    localStorage.clear();
   });
 
-  it("applies and remembers an explicit choice", () => {
-    setTheme("dark");
+  it("opens in dark whatever the system prefers", () => {
+    vi.spyOn(window, "matchMedia").mockReturnValue({ matches: false } as MediaQueryList);
 
-    expect(document.documentElement.dataset.theme).toBe("dark");
     expect(getTheme()).toBe("dark");
     expect(effectiveTheme()).toBe("dark");
   });
 
-  it("removes the attribute for system", () => {
+  it("applies and remembers an explicit choice", () => {
     setTheme("light");
-    setTheme("system");
 
-    expect(document.documentElement.dataset.theme).toBeUndefined();
-    expect(getTheme()).toBe("system");
+    expect(document.documentElement.dataset.theme).toBe("light");
+    expect(getTheme()).toBe("light");
+    expect(effectiveTheme()).toBe("light");
   });
 
-  it("cycles system, light, dark", () => {
-    expect(nextTheme("system")).toBe("light");
+  it("toggles between dark and light", () => {
+    expect(nextTheme("dark")).toBe("light");
     expect(nextTheme("light")).toBe("dark");
-    expect(nextTheme("dark")).toBe("system");
   });
 
   it("survives storage that throws", () => {
@@ -40,37 +34,35 @@ describe("theme", () => {
       throw new Error("blocked");
     });
 
-    expect(getTheme()).toBe("system");
+    expect(getTheme()).toBe("dark");
   });
 
   it("still applies a choice when storage refuses to write", () => {
-    const blocked = () => {
+    vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
       throw new Error("blocked");
-    };
-    vi.spyOn(Storage.prototype, "setItem").mockImplementation(blocked);
-    vi.spyOn(Storage.prototype, "removeItem").mockImplementation(blocked);
+    });
 
+    setTheme("light");
+    expect(document.documentElement.dataset.theme).toBe("light");
     setTheme("dark");
     expect(document.documentElement.dataset.theme).toBe("dark");
-    setTheme("system");
-    expect(document.documentElement.dataset.theme).toBeUndefined();
   });
 });
 
 describe("useTheme", () => {
   afterEach(() => {
     vi.restoreAllMocks();
-    setTheme("system");
+    setTheme("dark");
+    localStorage.clear();
   });
 
   it("tells every component when the theme changes, not only the one that changed it", () => {
-    vi.spyOn(window, "matchMedia").mockReturnValue({ matches: false, addEventListener: () => {}, removeEventListener: () => {} } as unknown as MediaQueryList);
     const toggle = renderHook(() => useTheme());
     const graphs = renderHook(() => useTheme());
 
-    act(() => toggle.result.current[1]("dark"));
+    act(() => toggle.result.current[1]("light"));
 
-    expect(graphs.result.current[0]).toBe("dark");
-    expect(graphs.result.current[2]).toBe("dark");
+    expect(graphs.result.current[0]).toBe("light");
+    expect(graphs.result.current[2]).toBe("light");
   });
 });

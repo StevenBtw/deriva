@@ -14,3 +14,9 @@ packages/deriva-studio/src/deriva/studio/static/
 studio/node_modules/
 # The type checker's incremental cache (written by npm run typecheck)
 studio/*.tsbuildinfo
+
+# Claude and agent files (kept out of public repos)
+CLAUDE.md
+
+# Zensical docs build output (docs.deriva.dev)
+site/

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib.util
 import platform
+from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as _distribution_version
 from pathlib import Path
 
@@ -33,6 +34,18 @@ def features() -> dict[str, bool]:
 def version() -> str:
     """The installed Deriva version (all three packages share it)."""
     return _distribution_version(DISTRIBUTION)
+
+
+def engines() -> dict[str, str | None]:
+    """The installed versions of the two databases (DuckDB for configuration, Grafeo for the graphs), read from the
+    package metadata so neither library is imported here; None when one is not installed."""
+    found: dict[str, str | None] = {}
+    for name in ("duckdb", "grafeo"):
+        try:
+            found[name] = _distribution_version(name)
+        except PackageNotFoundError:
+            found[name] = None
+    return found
 
 
 def environment() -> dict[str, str]:

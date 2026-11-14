@@ -4,9 +4,15 @@ import { graph } from "../api/client";
 import type { GraphView, LinkedView } from "../api/types";
 import { GraphWidget } from "../widgets/GraphWidget";
 import { type AppendBatch, LinkedGraphWidget } from "../widgets/LinkedGraphWidget";
-import { changedElements, lanesChanged, linkedNote, newItems, removedItems, toWidgetIds, typeColors, viewNote, withLaneLayouts, withLayerColors, withModelLane } from "./linkedView";
+import { changedElements, clusterPaletteFromTokens, lanesChanged, linkedNote, newItems, removedItems, toWidgetIds, typeColors, viewNote, withClusterColors, withLaneLayouts, withLayerColors, withModelLane } from "./linkedView";
 
 const EMPTY: GraphView = { nodes: [], edges: [] };
+// Rank filters: all nodes, or those at or above a PageRank percentile (the elements' sources always stay)
+const RANKS = [
+  { label: "All", minRank: undefined },
+  { label: "Top 50%", minRank: 50 },
+  { label: "Top 20%", minRank: 80 },
+] as const;
 
 type Drawn = { nodes: number; edges: number };
 
@@ -62,11 +68,19 @@ function LinkedLanes({
     features.current = list;
   }, []);
   const [error, setError] = useState<string | null>(null);
+  const [minRank, setMinRank] = useState<number | undefined>(undefined);
+  const [colourBy, setColourBy] = useState<"type" | "cluster">("type");
+  // A new rank filter draws the view afresh (it is a different sample, not the next step of a run)
+  const drawnRank = useRef<number | undefined>(undefined);
 
   useEffect(() => {
     let cancelled = false;
+    if (drawnRank.current !== minRank) {
+      shown.current = null;
+      drawnRank.current = minRank;
+    }
     graph
-      .linked()
+      .linked(undefined, minRank)
       .then((next) => {
         if (cancelled) return;
         setError(null);
@@ -93,14 +107,26 @@ function LinkedLanes({
     return () => {
       cancelled = true;
     };
-  }, [refresh]);
+  }, [refresh, minRank]);
+
+  // Colour by cluster: the eight largest Louvain clusters of the whole current view take the cluster palette
+  const clusterColour = useMemo(() => {
+    if (colourBy !== "cluster" || !current) return null;
+    const { palette, other } = clusterPaletteFromTokens(getComputedStyle(document.documentElement));
+    return new Map(withClusterColors(current.nodes, palette, other).filter((n) => n.lane === "intermediate").map((n) => [n.id, n.color as string]));
+    // dark: the palette is read again when the theme changes
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [colourBy, current, dark]);
+  const paint = useCallback(<T extends { id: string }>(nodes: T[]): T[] => (clusterColour ? nodes.map((n) => (clusterColour.has(n.id) ? { ...n, color: clusterColour.get(n.id) } : n)) : nodes), [clusterColour]);
+  const shownView = useMemo(() => (base ? { ...base, nodes: paint(base.nodes) } : null), [base, paint]);
+  const shownBatch = useMemo(() => (batch ? { ...batch, nodes: paint(batch.nodes) } : null), [batch, paint]);
 
   const pulseIds = useMemo(() => (current ? toWidgetIds(current, pulse) : []), [current, pulse]);
   const colors = useMemo(() => typeColors(current?.nodes ?? [], dark), [current, dark]);
   const onLaneAction = useCallback((lane: string) => lane === "model" && onOpenModel?.(), [onOpenModel]);
 
   if (error) return <div className="widget-error">{error}</div>;
-  if (!base || !current) return <div className="faint">Loading the graphs…</div>;
+  if (!base || !current || !shownView) return <div className="faint">Loading the graphs…</div>;
   return (
     <section className="lane lane-linked">
       <div className="lane-title">
@@ -110,10 +136,27 @@ function LinkedLanes({
           {current.missing_links > 0 && ` · ${current.missing_links} links not shown`}
         </span>
       </div>
+      <div className="lane-tools">
+        <div className="seg" role="group" aria-label="Colour the intermediate graph by">
+          {(["type", "cluster"] as const).map((by) => (
+            <button key={by} type="button" className={colourBy === by ? "on" : ""} aria-pressed={colourBy === by} onClick={() => setColourBy(by)}>
+              {by === "type" ? "Type" : "Cluster"}
+            </button>
+          ))}
+        </div>
+        <div className="seg" role="group" aria-label="Show graph nodes by rank">
+          {RANKS.map((rank) => (
+            <button key={rank.label} type="button" className={minRank === rank.minRank ? "on" : ""} aria-pressed={minRank === rank.minRank} onClick={() => setMinRank(rank.minRank)}>
+              {rank.label}
+            </button>
+          ))}
+        </div>
+        {colourBy === "cluster" && <span className="note">the eight largest Louvain clusters in colour, the rest in grey</span>}
+      </div>
       <div className="lane-body">
         <LinkedGraphWidget
-          view={base}
-          batch={batch}
+          view={shownView}
+          batch={shownBatch}
           pulse={pulseIds}
           totals={current.totals}
           typeColors={colors}

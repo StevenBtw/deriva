@@ -36,6 +36,9 @@ export function LinkedGraphWidget({ view, batch, pulse, totals, typeColors, dark
       fill: true,
       dark_mode: dark,
       show_query_input: false,
+      // The lanes are a fixed view: no layout menu, no 2D/3D switch (anywidget-graph 1.0; older builds ignore them)
+      show_layout_menu: false,
+      show_view_toggle: false,
       // The shim has no Python trait defaults: left out, labels would stay off
       show_labels: true,
       show_toolbar: true,

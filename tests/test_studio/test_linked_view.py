@@ -159,3 +159,82 @@ def test_separate_model_view_shows_only_the_model(make_client):
     view = client.get("/grafeo/view/model").json()
 
     assert [n["identifier"] for n in view["nodes"]] == ["ac_a"]
+
+
+def _contains(view: dict) -> list[tuple[str, str]]:
+    return sorted((e["source"], e["target"]) for e in view["edges"] if e.get("label") == "CONTAINS" and e.get("cross"))
+
+
+def test_a_repository_links_to_the_roots_of_its_sampled_containment_tree():
+    from deriva.studio.linked_view import build_linked_view
+
+    # The sample rarely holds the repository's own CONTAINS edges (they reach only the top folders); without these
+    # links the repository column stands apart from the graph it contains
+    graph = {
+        "nodes": [
+            {"id": "10", "labels": ["Repository"], "repository_name": "r"},
+            {"id": "12", "labels": ["Directory"], "repository_name": "r"},
+            {"id": "11", "labels": ["File"], "repository_name": "r"},
+            {"id": "13", "labels": ["File"], "repository_name": "r"},
+            {"id": "14", "labels": ["Method"], "repository_name": "r"},
+        ],
+        "edges": [{"source": "12", "target": "11", "label": "CONTAINS"}],
+    }
+    view = build_linked_view({"nodes": [], "edges": []}, graph)
+
+    # the folder and the loose file are roots; the file inside the sampled folder and the method are not
+    assert _contains(view) == [("10", "12"), ("10", "13")]
+
+
+def test_each_repository_links_only_to_its_own_roots():
+    from deriva.studio.linked_view import build_linked_view
+
+    graph = {
+        "nodes": [
+            {"id": "10", "labels": ["Repository"], "repository_name": "r"},
+            {"id": "9", "labels": ["Repository"], "repository_name": "s"},
+            {"id": "12", "labels": ["Directory"], "repository_name": "r"},
+            {"id": "22", "labels": ["Directory"], "repository_name": "s"},
+            {"id": "30", "labels": ["File"]},
+        ],
+        "edges": [],
+    }
+    view = build_linked_view({"nodes": [], "edges": []}, graph)
+
+    # a node without a repository name is left unlinked when there is more than one repository
+    assert _contains(view) == [("10", "12"), ("9", "22")]
+
+
+def test_a_rank_threshold_hides_low_ranked_graph_nodes_but_keeps_sources_and_repositories():
+    from deriva.studio.linked_view import build_linked_view
+
+    graph = {
+        "nodes": [
+            {"id": "10", "labels": ["Repository"], "repository_name": "r"},
+            {"id": "12", "labels": ["Directory"], "repository_name": "r", "pagerank_percentile": 90},
+            {"id": "11", "labels": ["File"], "repository_name": "r", "pagerank_percentile": 20, "deriva_id": "file::r::a.py"},
+            {"id": "13", "labels": ["File"], "repository_name": "r", "pagerank_percentile": 10},
+            {"id": "14", "labels": ["Method"], "repository_name": "r", "pagerank_percentile": 60},
+        ],
+        "edges": [{"source": "12", "target": "13", "label": "CONTAINS"}, {"source": "12", "target": "11", "label": "CONTAINS"}],
+    }
+    model = {"nodes": [{"id": "21", "properties": {"source": "file::r::a.py"}}], "edges": []}
+    view = build_linked_view(model, graph, min_rank=50)
+
+    shown = {n["id"] for n in view["nodes"]}
+    # 13 is below the threshold; 11 is too, but an element was derived from it, so it stays with its link
+    assert shown == {"10", "12", "11", "14", "21"}
+    assert all("13" not in (e["source"], e["target"]) for e in view["edges"])
+    assert derived_from(view) == [("21", "11")]
+    assert _contains(view) == [("10", "12")]
+
+
+def test_the_linked_route_passes_the_rank_threshold_on(make_client):
+    from unittest.mock import patch
+
+    nodes, edges = linked_repository()
+    session = FakeSession(query_graph_read_only=graph_db(nodes, edges), query_model_read_only=model_db(ELEMENT_ONE))
+    client = make_client(session)
+    with patch("deriva.studio.routers.grafeo.build_linked_view", return_value={"lanes": [], "nodes": [], "edges": [], "missing_links": 0}) as build:
+        client.get("/grafeo/view/linked?limit=6&min_rank=50")
+    assert build.call_args.kwargs.get("min_rank") == 50

@@ -82,6 +82,10 @@ dev = [
     "ty>=0.0.99",
     "types-lxml>=2026.2",
 ]
+# docs.deriva.dev (uv run --group docs zensical build --strict)
+docs = [
+    "zensical>=0.1.1",
+]
 
 [project.urls]
 Homepage = "https://deriva.dev"

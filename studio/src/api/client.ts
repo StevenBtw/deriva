@@ -1,41 +1,4 @@
-import type {
-  BenchmarkGroup,
-  BenchmarkModel,
-  BenchmarkRequest,
-  BenchmarkSession,
-  ConfigChange,
-  ConfigRow,
-  ConfigVersion,
-  Coverage,
-  DryRunResult,
-  ElementTrace,
-  FileType,
-  Flip,
-  GraphView,
-  InspectorView,
-  IntermediateOntology,
-  LinkedView,
-  LlmCall,
-  LlmCallSummary,
-  Model,
-  ModelConfigInput,
-  ModelConfigRow,
-  ModelTest,
-  ModelLevel,
-  ModelQuality,
-  OutputOntology,
-  Repository,
-  RepositoryData,
-  RunKind,
-  RunSummary,
-  SaveResult,
-  ScanResult,
-  Status,
-  StorageOverview,
-  StepStability,
-  StepType,
-  Trace,
-} from "./types";
+import type { BenchmarkGroup, BenchmarkModel, BenchmarkRequest, BenchmarkSession, ConfigChange, ConfigRow, ConfigVersion, Coverage, DryRunResult, ElementTrace, ExportResult, FileType, Flip, GraphView, InspectorView, IntermediateOntology, LinkedView, LlmCall, LlmCallSummary, Model, ModelConfigInput, ModelConfigRow, ModelExports, ModelLevel, ModelQuality, ModelTest, OutputOntology, Repository, RepositoryData, RunKind, RunSummary, SaveResult, ScanResult, Status, StepStability, StepType, StorageOverview, Trace } from "./types";
 
 /** An API answer other than 2xx; ``heldBy`` and ``busy`` explain a 503. */
 export class ApiError extends Error {
@@ -180,7 +143,14 @@ export const graph = {
   stats: () => api.get<{ total_nodes: number; by_type: Record<string, number> }>("/api/graph/stats"),
   // Without a limit the studio samples as many graph nodes as its graph_view_nodes setting says (300 until set)
   view: (database: "graph" | "model", limit?: number) => api.get<GraphView>(`/grafeo/view/${database}${limit === undefined ? "" : `?limit=${limit}`}`),
-  linked: (limit?: number) => api.get<LinkedView>(`/grafeo/view/linked${limit === undefined ? "" : `?limit=${limit}`}`),
+  /** The linked view; `minRank` (a PageRank percentile, 0 to 100) hides the graph nodes ranked below it, except sources. */
+  linked: (limit?: number, minRank?: number) => {
+    const query = new URLSearchParams();
+    if (limit !== undefined) query.set("limit", String(limit));
+    if (minRank !== undefined) query.set("min_rank", String(minRank));
+    const qs = query.toString();
+    return api.get<LinkedView>(`/grafeo/view/linked${qs ? `?${qs}` : ""}`);
+  },
   clear: () => api.del<{ success: boolean }>("/api/graph"),
 };
 
@@ -190,6 +160,10 @@ export const model = {
   /** The verdict on the model from its structure (a report) */
   quality: () => api.get<ModelQuality>("/api/model/quality"),
   clear: () => api.del<{ success: boolean }>("/api/model"),
+  /** The exports already in workspace/output, that folder, and a suggested name for the next */
+  exports: () => api.get<ModelExports>("/api/model/exports"),
+  /** Write the model as an exchange file; `path` must be in workspace/output (the server refuses anything else) */
+  save: (path: string) => api.post<ExportResult>("/api/model/export", { path }),
   /** The exchange file to save in the browser, with the name the studio gave it (repository and time) */
   download: async (): Promise<{ blob: Blob; name: string }> => {
     const response = await fetch("/api/model/download");

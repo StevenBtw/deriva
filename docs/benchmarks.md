@@ -8,7 +8,7 @@ Benchmarking is part of `deriva-dev`, one of Deriva's three packages (see [Archi
 
 ### Models
 
-A benchmark runs with one or more of the LLM models configured in your `.env`, each a block of `LLM_{NAME}_*` settings (the guide explains how to set one up). The model's name is that `NAME` in lower case with hyphens: `LLM_MISTRAL_SMALL_*` is `mistral-small`. A model that takes no temperature (`SAMPLING=false`) runs at its provider's default sampling; compare its consistency with that in mind. List them with:
+A benchmark runs with one or more of the LLM models configured in your `.env`, each a block of `LLM_{NAME}_*` settings ([Set up an LLM](get-started.md#set-up-an-llm) explains how to set one up). The model's name is that `NAME` in lower case with hyphens: `LLM_MISTRAL_SMALL_*` is `mistral-small`. A model that takes no temperature (`SAMPLING=false`) runs at its provider's default sampling; compare its consistency with that in mind. List them with:
 
 ```bash
 deriva-cli benchmark models
@@ -93,7 +93,7 @@ It writes the full analysis, including answer stability per repository, to `anal
 
 `benchmark deviations` groups the differences by step and sorts the steps by how much they vary, so you know where to start (see [Optimization](optimization.md)).
 
-In the studio, `deriva-dev` adds benchmark views for starting sessions, comparing runs and following a difference back to the prompt and answer that caused it.
+In the studio, `deriva-dev` adds benchmark views for starting sessions, comparing runs and following a difference back to the prompt and answer that caused it. Its session list finds sessions by text, repository, model and status; the selected sessions can be deleted, or marked failed while they still say running after their process stopped.
 
 ## Session files
 

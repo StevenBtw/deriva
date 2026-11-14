@@ -1,10 +1,43 @@
 # Deriva documentation
 
-Deriva reads a code repository and builds an ArchiMate model of its architecture. These pages explain the model it builds, how to measure and tune it, and how Deriva itself is put together; installation and first steps are in the [guide](https://deriva.dev/guide/).
+Deriva reads a code repository and builds an ArchiMate model of its architecture. Start with the install, then use, understand and tune it.
 
-- [ArchiMate](archimate.md): the elements and relationships Deriva derives, and where it finds them in code
-- [Benchmarking](benchmarks.md): repeat runs, measure consistency and find the steps that vary
-- [Optimization](optimization.md): change prompts and step settings so the model improves on any repository
-- [Architecture](architecture.md): the layers, the pipeline and where data is stored
+<p class="kicker">Where to start</p>
+
+<div class="grid cards" markdown>
+
+- **Get started**
+
+    ---
+
+    Install Deriva, connect a language model and derive your first model.
+
+    [Get started](get-started.md)
+
+- **Use Deriva**
+
+    ---
+
+    Studio, the CLI, configuration, data and queries, troubleshooting.
+
+    [Studio](studio.md) · [CLI](cli.md) · [Configuration](configuration.md)
+
+- **Understand**
+
+    ---
+
+    The ArchiMate elements Deriva derives, and how Deriva is put together.
+
+    [ArchiMate](archimate.md) · [Architecture](architecture.md)
+
+- **Tune**
+
+    ---
+
+    Measure how consistent runs are, and improve the model on any repository.
+
+    [Benchmarking](benchmarks.md) · [Optimization](optimization.md)
+
+</div>
 
 Commands are shown as `deriva-cli ...`, as the PyPI packages install them. From a source checkout, put `uv run` in front of them.

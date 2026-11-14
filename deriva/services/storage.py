@@ -76,6 +76,17 @@ def clear_llm_cache() -> dict[str, Any]:
     return held
 
 
+def list_exports() -> dict[str, Any]:
+    """The exported exchange files (*.xml) in workspace/output, newest first, with the folder they are in."""
+    folder = exports_folder()
+    files = [path for path in folder.glob("*.xml") if path.is_file()] if folder.is_dir() else []
+    stats = sorted(((path.name, path.stat()) for path in files), key=lambda item: item[1].st_mtime, reverse=True)
+    return {
+        "folder": str(folder.resolve()),
+        "files": [{"name": name, "bytes": stat.st_size, "modified": int(stat.st_mtime)} for name, stat in stats],
+    }
+
+
 def delete_exports() -> dict[str, int]:
     """Delete the exported exchange files (*.xml) in workspace/output; reports and other files stay."""
     folder = exports_folder()

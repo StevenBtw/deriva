@@ -1410,7 +1410,7 @@ Prompt text is configuration, not code: a run must be fully described by its con
 - **Every LLM call has a config row.** Services load the row and pass the text in; modules stay pure and only call the `llm_query_fn` they receive.
 - **Moving text between code and config must not change the prompt.** Pin the exact prompt with a test before the move, and check that a cached benchmark run hits the cache for every call and yields an identical model. Changing text is a result change: new config version, benchmark before and after.
 
-See [docs/benchmarks.md](docs/benchmarks.md) for running benchmarks and [docs/optimization.md](docs/optimization.md) for the recommended config optimization workflow.
+See [Benchmarking](https://docs.deriva.dev/benchmarks/) for running benchmarks and [Optimization](https://docs.deriva.dev/optimization/) for the recommended config optimization workflow.
 
 </details>
 
@@ -1793,26 +1793,26 @@ This project includes several specialized documentation files:
 
 | Document | Description |
 |----------|-------------|
-| [README.md](README.md) | Main project overview, setup, and usage guide |
-| [docs/architecture.md](docs/architecture.md) | Layers, packages, the home folder and the settings layer |
-| [docs/benchmarks.md](docs/benchmarks.md) | User guide for running benchmarks and analyzing consistency |
-| [docs/optimization.md](docs/optimization.md) | Prompt engineering and the config optimization workflow |
-| [docs/archimate.md](docs/archimate.md) | ArchiMate elements, relationships and metamodel rules |
-| [CHANGELOG.md](CHANGELOG.md) | Version history and release notes |
-| [.github/SECURITY.md](.github/SECURITY.md) | Security policy and vulnerability reporting |
+| [README.md](https://github.com/StevenBtw/Deriva/blob/main/README.md) | Project overview; install and usage are on [docs.deriva.dev](https://docs.deriva.dev/) |
+| [Architecture](https://docs.deriva.dev/architecture/) | Layers, packages, the home folder and the settings layer |
+| [Benchmarking](https://docs.deriva.dev/benchmarks/) | User guide for running benchmarks and analyzing consistency |
+| [Optimization](https://docs.deriva.dev/optimization/) | Prompt engineering and the config optimization workflow |
+| [ArchiMate](https://docs.deriva.dev/archimate/) | ArchiMate elements, relationships and metamodel rules |
+| [Changelog](https://docs.deriva.dev/changelog/) | Version history and release notes |
+| [.github/SECURITY.md](https://github.com/StevenBtw/Deriva/blob/main/.github/SECURITY.md) | Security policy and vulnerability reporting |
 
 ### Component Documentation
 
 | Component | README |
 |-----------|--------|
-| CLI | [deriva/cli/README.md](deriva/cli/README.md) |
-| LLM Adapter | [deriva/adapters/llm/README.md](deriva/adapters/llm/README.md) |
-| Graph Adapter | [deriva/adapters/graph/README.md](deriva/adapters/graph/README.md) |
-| Database Adapter | [deriva/adapters/database/README.md](deriva/adapters/database/README.md) |
-| Grafeo Adapter | [deriva/adapters/grafeo/README.md](deriva/adapters/grafeo/README.md) |
-| ArchiMate Adapter | [deriva/adapters/archimate/README.md](deriva/adapters/archimate/README.md) |
-| Repository Adapter | [deriva/adapters/repository/README.md](deriva/adapters/repository/README.md) |
-| Studio | [README.md#studio](README.md#studio) |
+| CLI | [deriva/cli/README.md](https://github.com/StevenBtw/Deriva/blob/main/deriva/cli/README.md) |
+| LLM Adapter | [deriva/adapters/llm/README.md](https://github.com/StevenBtw/Deriva/blob/main/deriva/adapters/llm/README.md) |
+| Graph Adapter | [deriva/adapters/graph/README.md](https://github.com/StevenBtw/Deriva/blob/main/deriva/adapters/graph/README.md) |
+| Database Adapter | [deriva/adapters/database/README.md](https://github.com/StevenBtw/Deriva/blob/main/deriva/adapters/database/README.md) |
+| Grafeo Adapter | [deriva/adapters/grafeo/README.md](https://github.com/StevenBtw/Deriva/blob/main/deriva/adapters/grafeo/README.md) |
+| ArchiMate Adapter | [deriva/adapters/archimate/README.md](https://github.com/StevenBtw/Deriva/blob/main/deriva/adapters/archimate/README.md) |
+| Repository Adapter | [deriva/adapters/repository/README.md](https://github.com/StevenBtw/Deriva/blob/main/deriva/adapters/repository/README.md) |
+| Studio | [Studio](https://docs.deriva.dev/studio/) |
 
 ---
 

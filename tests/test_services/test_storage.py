@@ -151,3 +151,29 @@ def test_an_orphaned_graph_is_deleted_but_never_a_repository_s_or_the_open_one(h
         storage.delete_graph("default", repositories={"alpha"}, active="default")
     with pytest.raises(KeyError):
         storage.delete_graph("never", repositories={"alpha"}, active="alpha")
+
+
+def test_the_exports_are_listed_newest_first_with_their_folder(home):
+    import os
+
+    from deriva.services import storage
+
+    output = home / "workspace" / "output"
+    os.utime(output / "model.xml", (1_000, 1_000))
+    os.utime(output / "deriva-20261019-101010.xml", (2_000, 2_000))
+
+    listed = storage.list_exports()
+
+    assert listed["folder"] == str(output.resolve())
+    # exchange files only (the refine report stays out), newest first, with size and time
+    assert listed["files"] == [
+        {"name": "deriva-20261019-101010.xml", "bytes": 10, "modified": 2_000},
+        {"name": "model.xml", "bytes": 10, "modified": 1_000},
+    ]
+
+
+def test_no_output_folder_lists_no_exports(tmp_path, monkeypatch):
+    from deriva.services import storage
+
+    monkeypatch.setenv("DERIVA_HOME", str(tmp_path))
+    assert storage.list_exports()["files"] == []

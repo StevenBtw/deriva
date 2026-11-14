@@ -8,7 +8,7 @@ import {
 } from "react-router-dom";
 
 import { ApiError, status as fetchStatus, modelConfigs } from "./api/client";
-import type { DbStatus } from "./api/types";
+import type { DbStatus, Engines } from "./api/types";
 import { Loading, LoadBoundary } from "./components/LazyLoad";
 import { Banner } from "./shell/Banner";
 import { Menu } from "./shell/Menu";
@@ -29,6 +29,9 @@ const IntermediateOntologyPage = lazy(() =>
 const OutputOntologyPage = lazy(() =>
   import("./pages/Ontology").then((m) => ({ default: m.OutputOntologyPage })),
 );
+const Model = lazy(() =>
+  import("./pages/Model").then((m) => ({ default: m.Model })),
+);
 const Repositories = lazy(() =>
   import("./pages/Repositories").then((m) => ({ default: m.Repositories })),
 );
@@ -45,6 +48,7 @@ type ShellStatus = {
   benchmark: boolean;
   noModel: boolean;
   environment?: { os?: string; python?: string };
+  engines?: Engines;
   /** The studio refused the request: this browser has not opened the launch link (the guard's 401). */
   locked?: boolean;
 };
@@ -99,6 +103,7 @@ function useShellStatus(intervalMs = 10000): ShellStatus {
             version: s.version,
             benchmark: s.features?.benchmark ?? true,
             environment: s.environment,
+            engines: s.engines,
           }));
           refreshModels();
           next(intervalMs);
@@ -174,7 +179,7 @@ function NotFound() {
 
 export function Shell() {
   const [chosenMode, setMode] = useState<Mode>("run");
-  const { db, version, benchmark, noModel, environment, locked } =
+  const { db, version, benchmark, noModel, environment, engines, locked } =
     useShellStatus();
   const { pathname } = useLocation();
   // Without benchmarking installed there is only Run mode
@@ -190,6 +195,7 @@ export function Shell() {
         version={version}
         benchmark={benchmark}
         environment={environment}
+        engines={engines}
       />
       <Banner db={db} noModel={noModel} />
       <div className="body">
@@ -231,6 +237,7 @@ export function Shell() {
                     />
                   }
                 />
+                <Route path="/config/export" element={<Model />} />
                 <Route path="*" element={<NotFound />} />
               </Routes>
             </Suspense>
