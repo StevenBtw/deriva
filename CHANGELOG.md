@@ -27,8 +27,8 @@ Studio look and docs release: Deriva Studio takes the Deriva identity, opens in 
 - **Headings are crisp**: Studio ships IBM Plex Mono SemiBold and draws headings and strong labels in it; before, the browser faked a bold from the medium weight, which read blurry.
 - **Temperatures read as set**: the Prompts tab and the benchmark trace show `temperature 0.3` instead of the stored float32 value `0.30000001192092896`; seven significant digits are kept (`1.234567`).
 - **Changing the colour mode keeps the whole run**: Type and Cluster redraw the linked view from everything drawn so far; before, nodes appended during a run disappeared until the next step. A new rank filter no longer sends the previous step's batch again.
-- **A typed export name stays**: Export config keeps a name typed while the page loads instead of replacing it with the suggested one, and announces a failed load or save to screen readers.
-- **Exports ending in `.XML` are listed**: Export config, Runs & storage and deleting the exports treat `name.XML` like `name.xml`, also on case-sensitive filesystems.
+- **A typed export name stays**: Export config keeps a name typed or cleared while the page loads instead of replacing it with the suggested one, and announces a failed load or save to screen readers.
+- **Exports ending in `.XML` are listed**: Export config, Runs & storage and deleting the exports treat `name.XML` like `name.xml`, also on case-sensitive filesystems, and list a file named just `.xml`.
 - **The DB details stay open on the way to them**: the pointer can cross the gap between the DB indicator and its details without closing them.
 - **`min_rank` outside 0 to 100 is refused**: `/grafeo/view/linked` answers 422 instead of drawing a misleading view.
 - **The docs match the code**: the rate-limit table lists 60 requests per minute for every hosted provider (Azure OpenAI included), `STRUCTURED_OUTPUT` is gone, and the CLI page says what `--phase` and `--only-step` do with `run all`.
