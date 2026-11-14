@@ -2,7 +2,7 @@
 
 All notable changes to Deriva, which derives ArchiMate models from code with knowledge graphs, heuristics and LLMs: a record of architectural decisions, resets, and a lot of trial and error.
 
-## [0.9.1] - Unreleased
+## [0.9.1] - 2026-11-14
 
 Studio look and docs release: Deriva Studio takes the Deriva identity, opens in dark and reads in IBM Plex Mono, and the documentation moves to docs.deriva.dev, built from this repository.
 
@@ -11,7 +11,7 @@ Studio look and docs release: Deriva Studio takes the Deriva identity, opens in 
 - **Studio opens in dark**: the theme toggle switches between dark and light and remembers the choice; it no longer follows the system setting.
 - **Studio uses the Deriva identity**: teal-tinted greys in both themes (cool greys before), IBM Plex Mono at 13px with line height 1.6, 3px panels and 6px controls. Primary buttons are filled `#2a7680` with white text.
 - **The linked view shows the whole flow**: the repository links to the roots of its sampled folders and files, so lines run from the repository into the intermediate graph (none were drawn before).
-- **The intermediate graph takes its own shape**: it is laid out without a hard edge, so its outline follows the graph's structure, and nodes of one Louvain cluster pull together (needs anywidget-graph with `free` and `group` lanes).
+- **The intermediate graph takes its own shape**: it is laid out without a hard edge, so its outline follows the graph's structure, and nodes of one Louvain cluster pull together (anywidget-graph 1.0's `free` and `group` lanes).
 - **Colour by cluster**: a Type or Cluster switch over the linked view; Cluster colours the eight largest Louvain clusters with the anywidget data palette and the rest grey.
 - **Rank filter**: All, Top 50% or Top 20% hides intermediate nodes below that PageRank percentile; the elements' sources always stay. `/grafeo/view/linked` takes `min_rank`.
 - **Menu icons from the Deriva mark**: Repositories, Intermediate ontology and Output ontology show the mark with their pipeline stage's ring at full strength, in the accent colour on the active page. Workspace, the start page, has a home icon; both config pages share the pen icon.
@@ -33,11 +33,18 @@ Studio look and docs release: Deriva Studio takes the Deriva identity, opens in 
 - **`min_rank` outside 0 to 100 is refused**: `/grafeo/view/linked` answers 422 instead of drawing a misleading view.
 - **The docs match the code**: the rate-limit table lists 60 requests per minute for every hosted provider (Azure OpenAI included), `STRUCTURED_OUTPUT` is gone, and the CLI page says what `--phase` and `--only-step` do with `run all`.
 
+### Dependencies
+
+- **anywidget-graph 1.0 and anywidget-archimate 1.0** (deriva-studio requires `>=1.0,<2`): the graph views take the anywidgets' shared look and honour the hidden layout menu and view switch; the model view draws the layered view and leaves the selected element's details to Studio's own panel.
+- **solvor 1.0** (requires `>=1.0,<2`): the same solver code and results as 0.6.3, so joint consistency reconciles as before.
+- **Dependencies at their latest**: typer 0.29.1, pydantic-ai 2.68, openai 3.51, anthropic 2.8, FastAPI 0.162.7, pypdf 7.1, tree-sitter 0.26.1, ruff 0.17.5 and ty 0.0.104, and Vite 8.3.8 and ESLint 10.15 for the studio. The pinned translation stack moves to CTranslate2 4.9.0, which translates German and French terms exactly as 4.8.5 did.
+
 ### Development
 
 - **The docs are published from this repository**: docs.deriva.dev is built with Zensical from `docs/` and published to GitHub Pages on every push to `main` that changes it; pull requests build it with `--strict`. Its fonts are served by the site itself; nothing loads from Google Fonts.
 - **Install and usage moved into the docs**: the install guide, Studio, CLI, configuration, data and troubleshooting live on docs.deriva.dev; the README and the PyPI READMEs keep one install line and a link.
 - **Studio's palette comes from the design tokens**: `node studio/scripts/sync-design-tokens.mjs <deriva-studio tokens.json> <anywidgets tokens.json>` rewrites the colour block in `studio/src/theme/tokens.css` from the deriva-studio tokens, with the cluster colours from the anywidgets' data palette.
+- **Version 0.9.1 for all three packages**: deriva-cli, deriva-studio and deriva-dev move together (the studio and dev packages pin the release beside them), and the studio front end reports 0.9.1.
 
 ## [0.9.0] - 2026-11-08
 
