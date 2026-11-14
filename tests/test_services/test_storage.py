@@ -177,3 +177,14 @@ def test_no_output_folder_lists_no_exports(tmp_path, monkeypatch):
 
     monkeypatch.setenv("DERIVA_HOME", str(tmp_path))
     assert storage.list_exports()["files"] == []
+
+
+def test_an_upper_case_xml_suffix_counts_as_an_export(home):
+    """The studio keeps the name it is given, so ``name.XML`` is listed, measured and deleted like ``name.xml``."""
+    output = home / "workspace" / "output"
+    (output / "Upper.XML").write_bytes(b"m" * 5)
+
+    assert "Upper.XML" in [file["name"] for file in storage.list_exports()["files"]]
+    assert storage.overview(repositories=set(), active="default")["exports"] == {"bytes": 25, "files": 3}
+    assert storage.delete_exports() == {"bytes": 25, "files": 3}
+    assert sorted(p.name for p in output.iterdir()) == ["joint_consistency.json"]
