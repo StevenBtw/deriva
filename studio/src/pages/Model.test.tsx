@@ -91,6 +91,20 @@ describe("Export config", () => {
     expect(name).toHaveValue("mine");
   });
 
+  it("keeps a field cleared before the suggestion arrives empty", async () => {
+    let answer: (value: Awaited<ReturnType<typeof model.exports>>) => void = () => {};
+    vi.mocked(model.exports).mockReturnValueOnce(new Promise((resolve) => (answer = resolve)));
+    render(<Model />);
+    const name = screen.getByLabelText("File name");
+
+    await userEvent.type(name, "x");
+    await userEvent.clear(name);
+    answer({ folder: FOLDER, suggested: "deriva-20261113-142900.xml", files: [] });
+
+    expect(await screen.findByText("No exports yet.")).toBeInTheDocument();
+    expect(name).toHaveValue("");
+  });
+
   it("announces a failure to screen readers", async () => {
     vi.mocked(model.exports).mockRejectedValueOnce(new Error("The output folder cannot be read"));
     render(<Model />);

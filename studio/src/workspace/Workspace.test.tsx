@@ -160,23 +160,28 @@ describe("Workspace", () => {
   });
 
   it("colours a clustered node from the cluster palette and an unclustered one grey", async () => {
-    document.documentElement.style.setProperty("--cluster-1", "#123456");
-    document.documentElement.style.setProperty("--faint", "#777777");
-    vi.mocked(graph.linked).mockResolvedValue(
-      linkedView([
-        { id: "10", deriva_id: "file_a", lane: "intermediate", louvain_community: 4 },
-        { id: "11", deriva_id: "file_b", lane: "intermediate" },
-        { id: "20", deriva_id: "el_a", lane: "output" },
-      ]),
-    );
-    render(<Workspace />);
-    await screen.findByTestId("linked");
+    const style = document.documentElement.style;
+    style.setProperty("--cluster-1", "#123456");
+    style.setProperty("--faint", "#777777");
+    try {
+      vi.mocked(graph.linked).mockResolvedValue(
+        linkedView([
+          { id: "10", deriva_id: "file_a", lane: "intermediate", louvain_community: 4 },
+          { id: "11", deriva_id: "file_b", lane: "intermediate" },
+          { id: "20", deriva_id: "el_a", lane: "output" },
+        ]),
+      );
+      render(<Workspace />);
+      await screen.findByTestId("linked");
 
-    await userEvent.click(screen.getByRole("button", { name: "Cluster" }));
+      await userEvent.click(screen.getByRole("button", { name: "Cluster" }));
 
-    expect(screen.getByTestId("linked-coloured")).toHaveTextContent(/^10=#123456,11=#777777$/);
-    document.documentElement.style.removeProperty("--cluster-1");
-    document.documentElement.style.removeProperty("--faint");
+      expect(screen.getByTestId("linked-coloured")).toHaveTextContent(/^10=#123456,11=#777777$/);
+    } finally {
+      // A failed assertion must not leave the palette to the tests after it
+      style.removeProperty("--cluster-1");
+      style.removeProperty("--faint");
+    }
   });
 
   it("lists the studio's recent runs with kind, repository and status", async () => {
