@@ -188,3 +188,13 @@ def test_an_upper_case_xml_suffix_counts_as_an_export(home):
     assert storage.overview(repositories=set(), active="default")["exports"] == {"bytes": 25, "files": 3}
     assert storage.delete_exports() == {"bytes": 25, "files": 3}
     assert sorted(p.name for p in output.iterdir()) == ["joint_consistency.json"]
+
+
+def test_an_export_named_only_xml_counts_as_an_export(home):
+    """The studio accepts the name ``.xml``, whose ``Path.suffix`` is empty: it is listed, measured and deleted too."""
+    output = home / "workspace" / "output"
+    (output / ".xml").write_bytes(b"m" * 5)
+
+    assert ".xml" in [file["name"] for file in storage.list_exports()["files"]]
+    assert storage.overview(repositories=set(), active="default")["exports"] == {"bytes": 25, "files": 3}
+    assert storage.delete_exports() == {"bytes": 25, "files": 3}

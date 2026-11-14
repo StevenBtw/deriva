@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+
 import pytest
 
 
@@ -26,7 +28,8 @@ def test_the_served_widgets_read_the_traits_the_studio_sets(client, name, traits
     js = client.get(f"/widgets/{name}/index.js").text
 
     for trait in traits:
-        assert trait in js, f"{name} does not read {trait}"
+        # The model read itself, not only the trait's name (a default or a docstring would name it too)
+        assert re.search(rf"model\.get\(\s*[\"']{trait}[\"']\s*\)", js), f"{name} does not read {trait}"
 
 
 def test_unknown_widget_is_404(client):
