@@ -25,13 +25,19 @@ Studio look and docs release: Deriva Studio takes the Deriva identity, opens in 
 - **Switching repository renames its node**: the linked view showed the previous repository's name on the repository node until a reload; a node whose name changed is now redrawn in place.
 - **Artifacts sit in the technology row**: in the linked view, element types without a layer in their name (Artifact, Communication Network, Path, the Physical types; Contract, Representation and Product in business) take their layer's row and colour instead of a palette colour outside the rows.
 - **Headings are crisp**: Studio ships IBM Plex Mono SemiBold and draws headings and strong labels in it; before, the browser faked a bold from the medium weight, which read blurry.
-- **Temperatures read as set**: the Prompts tab and the benchmark trace show `temperature 0.3` instead of the stored float32 value `0.30000001192092896`.
+- **Temperatures read as set**: the Prompts tab and the benchmark trace show `temperature 0.3` instead of the stored float32 value `0.30000001192092896`; seven significant digits are kept (`1.234567`).
+- **Changing the colour mode keeps the whole run**: Type and Cluster redraw the linked view from everything drawn so far; before, nodes appended during a run disappeared until the next step. A new rank filter no longer sends the previous step's batch again.
+- **A typed export name stays**: Export config keeps a name typed while the page loads instead of replacing it with the suggested one, and announces a failed load or save to screen readers.
+- **Exports ending in `.XML` are listed**: Export config, Runs & storage and deleting the exports treat `name.XML` like `name.xml`, also on case-sensitive filesystems.
+- **The DB details stay open on the way to them**: the pointer can cross the gap between the DB indicator and its details without closing them.
+- **`min_rank` outside 0 to 100 is refused**: `/grafeo/view/linked` answers 422 instead of drawing a misleading view.
+- **The docs match the code**: the rate-limit table lists 60 requests per minute for every hosted provider (Azure OpenAI included), `STRUCTURED_OUTPUT` is gone, and the CLI page says what `--phase` and `--only-step` do with `run all`.
 
 ### Development
 
 - **The docs are published from this repository**: docs.deriva.dev is built with Zensical from `docs/` and published to GitHub Pages on every push to `main` that changes it; pull requests build it with `--strict`. Its fonts are served by the site itself; nothing loads from Google Fonts.
 - **Install and usage moved into the docs**: the install guide, Studio, CLI, configuration, data and troubleshooting live on docs.deriva.dev; the README and the PyPI READMEs keep one install line and a link.
-- **Studio's palette comes from the design tokens**: `node studio/scripts/sync-design-tokens.mjs <tokens.json>` rewrites the colour block in `studio/src/theme/tokens.css` from the deriva-studio tokens.
+- **Studio's palette comes from the design tokens**: `node studio/scripts/sync-design-tokens.mjs <deriva-studio tokens.json> <anywidgets tokens.json>` rewrites the colour block in `studio/src/theme/tokens.css` from the deriva-studio tokens, with the cluster colours from the anywidgets' data palette.
 
 ## [0.9.0] - 2026-11-08
 
