@@ -7,6 +7,8 @@ import { type AppendBatch, LinkedGraphWidget } from "../widgets/LinkedGraphWidge
 import { changedElements, clusterPaletteFromTokens, lanesChanged, linkedNote, newItems, removedItems, toWidgetIds, typeColors, viewNote, withClusterColors, withLaneLayouts, withLayerColors, withModelLane } from "./linkedView";
 
 const EMPTY: GraphView = { nodes: [], edges: [] };
+// A view as the widget draws it in full: the model lane at the end, the elements in their layer colours
+const drawn = (view: LinkedView): LinkedView => ({ ...view, lanes: withModelLane(withLaneLayouts(view.lanes)), nodes: withLayerColors(view.nodes) });
 // Rank filters: all nodes, or those at or above a PageRank percentile (the elements' sources always stay)
 const RANKS = [
   { label: "All", minRank: undefined },
@@ -72,6 +74,20 @@ function LinkedLanes({
   const [colourBy, setColourBy] = useState<"type" | "cluster">("type");
   // A new rank filter draws the view afresh (it is a different sample, not the next step of a run)
   const drawnRank = useRef<number | undefined>(undefined);
+  // Colouring by cluster recolours the whole view at every step (the clusters change as it grows): no batches then
+  const byCluster = useRef(false);
+  // Every full draw ends the batches: the last one is not sent again on top of it
+  const redraw = useCallback((view: LinkedView) => {
+    setBase(drawn(view));
+    setBatch(null);
+  }, []);
+  // A new colour mode draws the whole current view (base and the batches since), not the base alone
+  const colourWith = (by: "type" | "cluster") => {
+    if (by === colourBy) return;
+    byCluster.current = by === "cluster";
+    setColourBy(by);
+    if (current) redraw(current);
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -90,8 +106,8 @@ function LinkedLanes({
         const removed = previous ? removedItems(previous, next) : null;
         const changed = previous ? changedElements(previous, next) : [];
         const leaving = Boolean(removed && (removed.nodes.length || removed.edges.length || changed.length));
-        if (!previous || !removed || lanesChanged(previous, next) || !features.current.includes("append") || (leaving && !features.current.includes("remove"))) {
-          setBase({ ...next, lanes: withModelLane(withLaneLayouts(next.lanes)), nodes: withLayerColors(next.nodes) });
+        if (!previous || !removed || byCluster.current || lanesChanged(previous, next) || !features.current.includes("append") || (leaving && !features.current.includes("remove"))) {
+          redraw(next);
           return;
         }
         const items = newItems(previous, next);
@@ -107,7 +123,7 @@ function LinkedLanes({
     return () => {
       cancelled = true;
     };
-  }, [refresh, minRank]);
+  }, [refresh, minRank, redraw]);
 
   // Colour by cluster: the eight largest Louvain clusters of the whole current view take the cluster palette
   const clusterColour = useMemo(() => {
@@ -118,8 +134,8 @@ function LinkedLanes({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [colourBy, current, dark]);
   const paint = useCallback(<T extends { id: string }>(nodes: T[]): T[] => (clusterColour ? nodes.map((n) => (clusterColour.has(n.id) ? { ...n, color: clusterColour.get(n.id) } : n)) : nodes), [clusterColour]);
+  // Batches come only while colouring by type, so they need no paint (a new paint object would send one again)
   const shownView = useMemo(() => (base ? { ...base, nodes: paint(base.nodes) } : null), [base, paint]);
-  const shownBatch = useMemo(() => (batch ? { ...batch, nodes: paint(batch.nodes) } : null), [batch, paint]);
 
   const pulseIds = useMemo(() => (current ? toWidgetIds(current, pulse) : []), [current, pulse]);
   const colors = useMemo(() => typeColors(current?.nodes ?? [], dark), [current, dark]);
@@ -139,7 +155,7 @@ function LinkedLanes({
       <div className="lane-tools">
         <div className="seg" role="group" aria-label="Colour the intermediate graph by">
           {(["type", "cluster"] as const).map((by) => (
-            <button key={by} type="button" className={colourBy === by ? "on" : ""} aria-pressed={colourBy === by} onClick={() => setColourBy(by)}>
+            <button key={by} type="button" className={colourBy === by ? "on" : ""} aria-pressed={colourBy === by} onClick={() => colourWith(by)}>
               {by === "type" ? "Type" : "Cluster"}
             </button>
           ))}
@@ -156,7 +172,7 @@ function LinkedLanes({
       <div className="lane-body">
         <LinkedGraphWidget
           view={shownView}
-          batch={shownBatch}
+          batch={batch}
           pulse={pulseIds}
           totals={current.totals}
           typeColors={colors}
