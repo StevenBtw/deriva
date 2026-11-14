@@ -68,6 +68,7 @@ The bundled business function model is an excerpt of APQC's Process Classificati
 - [FastAPI](https://fastapi.tiangolo.com) and [React](https://react.dev) - The studio
 - [anywidget-graph](https://github.com/GrafeoDB/anywidget-graph) and [anywidget-archimate](https://github.com/StevenBtw/anywidget-archimate) - Graph and model views
 - [Grafeo](https://github.com/GrafeoDB/grafeo) - Embedded graph database
+- [DuckDB](https://duckdb.org) - Embedded relational database
 - [ArchiMate](https://www.opengroup.org/archimate-forum) - Enterprise architecture standard
 - [Archi](https://www.archimatetool.com) - Open source ArchiMate modeling tool
 - [Tree-sitter](https://tree-sitter.github.io/tree-sitter/) - Multi-language AST parsing

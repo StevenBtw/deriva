@@ -61,7 +61,7 @@ jobs:
       - name: Set up Python
         run: uv python install ${{ env.PYTHON_VERSION }}
 
-      # docs.deriva.dev builds from docs/, README, CONTRIBUTING and CHANGELOG: a broken link fails here,
+      # docs.deriva.dev builds from docs/, CONTRIBUTING and CHANGELOG: a broken link fails here,
       # before it reaches main (where .github/workflows/docs.yml publishes it)
       - name: Build the docs
         run: uv run --only-group docs zensical build --strict

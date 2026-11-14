@@ -163,7 +163,7 @@ Ollama gives each model a 4096-token window unless you start it with a larger on
 
 To check a model config, press **Test** next to it on the studio's **General** page, or run `deriva-cli config model test <name>`: it makes one small call and says whether the key, the model id and the URL work, or what to fix.
 
-`STRUCTURED_OUTPUT=true` lets the API enforce the JSON schema (OpenAI, Anthropic, Mistral and Ollama). Rate limits, retries and the response cache have defaults; [Configuration](configuration.md) has them, and the repository's [`.env.example`](https://github.com/StevenBtw/Deriva/blob/main/.env.example) lists every setting.
+Structured answers need no setting: Deriva passes each step's schema to the provider and checks the answer against it. Rate limits, retries and the response cache have defaults; [Configuration](configuration.md) has them, and the repository's [`.env.example`](https://github.com/StevenBtw/Deriva/blob/main/.env.example) lists every setting.
 
 ## Your first model
 
@@ -176,7 +176,7 @@ To check a model config, press **Test** next to it on the studio's **General** p
 
 ### Export to Archi
 
-Deriva writes the model in the Open Group ArchiMate exchange format. From the studio: open **View model** and press **Export XML**; the browser saves it as `<repository>-<yyyymmdd-hhmmss>.xml`, and a copy under the same name stays in `workspace/output` on the machine that runs the studio. Or from the command line:
+Deriva writes the model in the Open Group ArchiMate exchange format. From the studio: open **Export config** (under **Model** in the menu), choose a file name and press **Save**; the page shows the full path in `workspace/output`, warns when the save replaces a file, and lists the exports already there. **Export XML** in the **View model** panel saves one too: the browser downloads it as `<repository>-<yyyymmdd-hhmmss>.xml`, and a copy under the same name stays in `workspace/output` on the machine that runs the studio. Or from the command line:
 
 ```bash
 deriva-cli export -o workspace/output/model.xml --repo my-repo

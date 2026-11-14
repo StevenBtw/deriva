@@ -9,7 +9,7 @@ from __future__ import annotations
 from collections import Counter
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
 from deriva.services import read_only_refusal
@@ -111,7 +111,7 @@ def _graph_view(session: Any, budget: int, first_ids: list[str] | None = None, k
 
 
 @router.get("/view/linked")
-def linked_view(limit: int | None = None, min_rank: float | None = None, session: Any = Depends(get_session)) -> dict[str, Any]:
+def linked_view(limit: int | None = None, min_rank: float | None = Query(None, ge=0, le=100), session: Any = Depends(get_session)) -> dict[str, Any]:
     """The intermediate graph and the output graph as two lanes, with each element linked to its source nodes.
 
     The output graph (rejected elements too) and the repositories are always shown; the rest of ``limit`` (the

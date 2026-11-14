@@ -423,6 +423,13 @@ tbody tr.clickable:hover td {
   transform: translateY(-2px);
   transition: opacity 120ms ease, transform 120ms ease, visibility 120ms;
 }
+/* The 6px gap above the panel still counts as the host, so the pointer can cross it without the panel closing */
+.db-details::before {
+  content: "";
+  position: absolute;
+  inset: auto 0 100% 0;
+  height: 7px;
+}
 .db-host:hover .db-details,
 .db-host:focus-within .db-details {
   opacity: 1;

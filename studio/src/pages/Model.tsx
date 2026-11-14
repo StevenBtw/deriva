@@ -47,7 +47,8 @@ export function Model() {
       .then((next) => {
         if (cancelled) return;
         setInfo(next);
-        setName(next.suggested);
+        // A name typed while the list loads stays
+        setName((current) => current || next.suggested);
       })
       .catch((reason: unknown) => !cancelled && setError(message(reason)));
     return () => {
@@ -107,7 +108,7 @@ export function Model() {
               Saved: {result.elements_exported ?? 0} elements · {result.relationships_exported ?? 0} relationships · {result.views_exported ?? 0} views
             </p>
           )}
-          {error && <p className="export-note bad">{error}</p>}
+          {error && <p className="export-note bad" role="alert">{error}</p>}
         </div>
 
         <div className="card export">

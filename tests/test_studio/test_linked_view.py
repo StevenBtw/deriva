@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from tests.test_studio.conftest import FakeSession
 from tests.test_studio.test_grafeo_routes import graph_db, small_repository
 
@@ -238,3 +240,10 @@ def test_the_linked_route_passes_the_rank_threshold_on(make_client):
     with patch("deriva.studio.routers.grafeo.build_linked_view", return_value={"lanes": [], "nodes": [], "edges": [], "missing_links": 0}) as build:
         client.get("/grafeo/view/linked?limit=6&min_rank=50")
     assert build.call_args.kwargs.get("min_rank") == 50
+
+
+@pytest.mark.parametrize("rank", [-1, 101])
+def test_the_linked_route_refuses_a_rank_outside_0_to_100(make_client, rank):
+    nodes, edges = linked_repository()
+    session = FakeSession(query_graph_read_only=graph_db(nodes, edges), query_model_read_only=model_db(ELEMENT_ONE))
+    assert make_client(session).get(f"/grafeo/view/linked?min_rank={rank}").status_code == 422
