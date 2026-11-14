@@ -38,6 +38,7 @@ Studio look and docs release: Deriva Studio takes the Deriva identity, opens in 
 - **anywidget-graph 1.0 and anywidget-archimate 1.0** (deriva-studio requires `>=1.0,<2`): the graph views take the anywidgets' shared look and honour the hidden layout menu and view switch; the model view draws the layered view and leaves the selected element's details to Studio's own panel.
 - **solvor 1.0** (requires `>=1.0,<2`): the same solver code and results as 0.6.3, so joint consistency reconciles as before.
 - **Dependencies at their latest**: typer 0.29.1, pydantic-ai 2.68, openai 3.51, anthropic 2.8, FastAPI 0.162.7, pypdf 7.1, tree-sitter 0.26.1, ruff 0.17.5 and ty 0.0.104, and Vite 8.3.8 and ESLint 10.15 for the studio. The pinned translation stack moves to CTranslate2 4.9.0, which translates German and French terms exactly as 4.8.5 did.
+- **minimatch 11.0.8 throughout the studio's build tools** (an npm override): the copy typescript-eslint pulled in, 10.2.6, had a moderate denial-of-service advisory; `npm audit` now reports none.
 
 ### Development
 
