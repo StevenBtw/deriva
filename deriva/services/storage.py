@@ -26,8 +26,8 @@ def _measure(folder: Path, pattern: str = "**/*") -> tuple[int, int]:
 
 
 def _exchange_files(folder: Path) -> list[Path]:
-    """The exchange files (``.xml`` in any case: the studio keeps the name it is given) directly in ``folder``."""
-    return [path for path in folder.iterdir() if path.is_file() and path.suffix.lower() == ".xml"] if folder.is_dir() else []
+    """The exchange files (names ending in ``.xml`` in any case, ``.xml`` itself too: the studio keeps the name it is given) in ``folder``."""
+    return [path for path in folder.iterdir() if path.is_file() and path.name.lower().endswith(".xml")] if folder.is_dir() else []
 
 
 def llm_cache_folder() -> Path:
