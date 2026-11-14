@@ -37,7 +37,7 @@ function block(selector, mode) {
   });
   for (let n = 1; n <= 8; n++) {
     const colour = widgetTokens[mode]?.[`data-${n}`];
-    if (typeof colour !== "string" || !colour) throw new Error(`widget token "data-${n}" missing in ${mode}`);
+    if (typeof colour !== "string" || !colour.trim()) throw new Error(`widget token "data-${n}" missing in ${mode}`);
     lines.push(`  --cluster-${n}: ${colour};`);
   }
   lines.push(`  --accent-soft: ${t.link}${SOFT[mode]};`, `  color-scheme: ${mode};`);
