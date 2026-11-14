@@ -4,7 +4,7 @@ Settings, file types, limits, name patterns and versioned step configuration.
 
 ## Environment Variables (.env)
 
-Runtime settings (the graph folder, models and providers, limits) live in `.env` in your [home folder](get-started.md#where-deriva-keeps-its-files); a variable set in the environment wins over the file. File types, name patterns, system settings and the versioned step configuration are in Deriva's configuration database, changed with the commands below. Key `.env` settings:
+Runtime settings (the graph folder, models and providers, LLM rate limits) live in `.env` in your [home folder](get-started.md#where-deriva-keeps-its-files); a variable set in the environment wins over the file. File types, name patterns, system settings and the versioned step configuration are in Deriva's configuration database, changed with the commands below. Key `.env` settings:
 
 ```bash
 # Graph database (grafeo embedded)

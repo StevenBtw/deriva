@@ -36,7 +36,7 @@ deriva-cli config show extraction BusinessConcept
 # must also be implemented and registered in code under the same name
 deriva-cli config add derivation my_refine_step --phase refine --sequence 4 --params '{"dry_run": true}'
 deriva-cli config enable derivation my_refine_step
-# Every ArchiMate element type has a generate step; the types without a step of their own
+# Every supported ArchiMate element type has a generate step; the types without a step of their own
 # (Contract or Product, for example) ship disabled: enable one to derive that type too
 deriva-cli config enable derivation Contract
 
