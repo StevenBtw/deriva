@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { model as modelApi } from "../api/client";
 import type { ExportResult, ModelExports } from "../api/types";
@@ -27,6 +27,8 @@ function fileName(name: string): string {
 export function Model() {
   const [info, setInfo] = useState<ModelExports | null>(null);
   const [name, setName] = useState("");
+  // Any edit, a clear included, keeps the suggested name out
+  const edited = useRef(false);
   const [saving, setSaving] = useState(false);
   const [result, setResult] = useState<ExportResult | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -47,7 +49,8 @@ export function Model() {
       .then((next) => {
         if (cancelled) return;
         setInfo(next);
-        setName(next.suggested);
+        // A name typed or cleared while the list loads stays
+        if (!edited.current) setName(next.suggested);
       })
       .catch((reason: unknown) => !cancelled && setError(message(reason)));
     return () => {
@@ -87,7 +90,11 @@ export function Model() {
         <div className="card export">
           <div className="export-row">
             <label htmlFor="export-name">File name</label>
-            <input id="export-name" value={name} spellCheck={false} onChange={(event) => setName(event.target.value)} />
+            <input id="export-name" value={name} spellCheck={false} onChange={(event) => {
+                edited.current = true;
+                setName(event.target.value);
+              }}
+            />
             <button type="button" className="primary small" disabled={saving || invalid || !target || !info} onClick={save}>
               {saving ? "Saving…" : "Save"}
             </button>
@@ -107,7 +114,7 @@ export function Model() {
               Saved: {result.elements_exported ?? 0} elements · {result.relationships_exported ?? 0} relationships · {result.views_exported ?? 0} views
             </p>
           )}
-          {error && <p className="export-note bad">{error}</p>}
+          {error && <p className="export-note bad" role="alert">{error}</p>}
         </div>
 
         <div className="card export">

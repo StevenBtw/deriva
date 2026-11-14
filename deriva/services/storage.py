@@ -25,6 +25,11 @@ def _measure(folder: Path, pattern: str = "**/*") -> tuple[int, int]:
     return sum(p.stat().st_size for p in files), len(files)
 
 
+def _exchange_files(folder: Path) -> list[Path]:
+    """The exchange files (names ending in ``.xml`` in any case, ``.xml`` itself too: the studio keeps the name it is given) in ``folder``."""
+    return [path for path in folder.iterdir() if path.is_file() and path.name.lower().endswith(".xml")] if folder.is_dir() else []
+
+
 def llm_cache_folder() -> Path:
     return resolve(LlmSettings().cache_dir)
 
@@ -52,7 +57,8 @@ def overview(repositories: set[str], active: str) -> dict[str, Any]:
         kind = "repository" if key in repositories else "shared" if key == DEFAULT_DATABASE else "orphaned"
         graphs.append({"key": key, "bytes": database_bytes(key), "kind": kind, "active": key == active})
     graphs.sort(key=lambda g: (-g["bytes"], g["key"]))
-    export_bytes, export_files = _measure(exports_folder(), "*.xml")
+    exports = _exchange_files(exports_folder())
+    export_bytes, export_files = sum(path.stat().st_size for path in exports), len(exports)
     sessions = workspace() / "benchmarks"
     session_bytes, _ = _measure(sessions)
     return {
@@ -79,7 +85,7 @@ def clear_llm_cache() -> dict[str, Any]:
 def list_exports() -> dict[str, Any]:
     """The exported exchange files (*.xml) in workspace/output, newest first, with the folder they are in."""
     folder = exports_folder()
-    files = [path for path in folder.glob("*.xml") if path.is_file()] if folder.is_dir() else []
+    files = _exchange_files(folder)
     stats = sorted(((path.name, path.stat()) for path in files), key=lambda item: item[1].st_mtime, reverse=True)
     return {
         "folder": str(folder.resolve()),
@@ -90,11 +96,11 @@ def list_exports() -> dict[str, Any]:
 def delete_exports() -> dict[str, int]:
     """Delete the exported exchange files (*.xml) in workspace/output; reports and other files stay."""
     folder = exports_folder()
-    size, files = _measure(folder, "*.xml")
-    for path in folder.glob("*.xml") if folder.is_dir() else []:
-        if path.is_file():
-            path.unlink()
-    return {"bytes": size, "files": files}
+    files = _exchange_files(folder)
+    size = sum(path.stat().st_size for path in files)
+    for path in files:
+        path.unlink()
+    return {"bytes": size, "files": len(files)}
 
 
 def delete_graph(key: str, repositories: set[str], active: str) -> dict[str, Any]:

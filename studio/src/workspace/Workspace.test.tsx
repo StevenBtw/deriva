@@ -69,7 +69,12 @@ vi.mock("../widgets/LinkedGraphWidget", () => ({
           {batch?.remove ? `${batch.remove.nodes.join(",")}|${batch.remove.edges.map((e) => `${e.source}>${e.target}`).join(",")}` : ""}
         </span>
         <span data-testid="linked-pulse">{pulse.join(",")}</span>
-        <span data-testid="linked-coloured">{view.nodes.filter((n) => "color" in n).map((n) => n.id).join(",")}</span>
+        <span data-testid="linked-coloured">
+          {view.nodes
+            .filter((n) => "color" in n && n.lane === "intermediate")
+            .map((n) => `${n.id}=${(n as { color?: string }).color}`)
+            .join(",")}
+        </span>
       </div>
     );
   },
@@ -101,7 +106,7 @@ const LANES = [
   { id: "intermediate", title: "Intermediate graph" },
   { id: "output", title: "Output graph" },
 ];
-const linkedView = (nodes: { id: string; deriva_id: string; lane: string; enabled?: boolean }[], missing = 0): LinkedView => ({ lanes: LANES, nodes, edges: [], missing_links: missing });
+const linkedView = (nodes: { id: string; deriva_id: string; lane: string; enabled?: boolean; louvain_community?: number }[], missing = 0): LinkedView => ({ lanes: LANES, nodes, edges: [], missing_links: missing });
 const event = (seq: number, name: RunEvent["event"], data: RunEvent["data"] = {}): RunEvent => ({ seq, event: name, data: { ts: 1791411141, ...data } });
 const llm = (seq: number, callId: string, data: RunEvent["data"] = {}): RunEvent =>
   event(seq, "llm", { call_id: callId, seq: Number(callId.slice(1)), step: "DirectoryClassification", cache_hit: false, latency_ms: 812, tokens_in: 1840, tokens_out: 52, error: null, ...data });
@@ -152,8 +157,31 @@ describe("Workspace", () => {
     await waitFor(() => expect(graph.linked).toHaveBeenLastCalledWith(undefined, 80));
 
     expect(screen.getByTestId("linked-coloured")).toHaveTextContent("");
-    await userEvent.click(screen.getByRole("button", { name: "Cluster" }));
-    expect(screen.getByTestId("linked-coloured")).toHaveTextContent("10");
+  });
+
+  it("colours a clustered node from the cluster palette and an unclustered one grey", async () => {
+    const style = document.documentElement.style;
+    style.setProperty("--cluster-1", "#123456");
+    style.setProperty("--faint", "#777777");
+    try {
+      vi.mocked(graph.linked).mockResolvedValue(
+        linkedView([
+          { id: "10", deriva_id: "file_a", lane: "intermediate", louvain_community: 4 },
+          { id: "11", deriva_id: "file_b", lane: "intermediate" },
+          { id: "20", deriva_id: "el_a", lane: "output" },
+        ]),
+      );
+      render(<Workspace />);
+      await screen.findByTestId("linked");
+
+      await userEvent.click(screen.getByRole("button", { name: "Cluster" }));
+
+      expect(screen.getByTestId("linked-coloured")).toHaveTextContent(/^10=#123456,11=#777777$/);
+    } finally {
+      // A failed assertion must not leave the palette to the tests after it
+      style.removeProperty("--cluster-1");
+      style.removeProperty("--faint");
+    }
   });
 
   it("lists the studio's recent runs with kind, repository and status", async () => {
@@ -425,6 +453,54 @@ describe("Workspace", () => {
 
     await waitFor(() => expect(screen.getByTestId("linked-batch")).toHaveTextContent("1:20"));
     expect(screen.getByTestId("linked-base")).toHaveTextContent(/^10$/);
+  });
+
+  it("redraws from the whole current view when the colour mode changes, and sends no batch again", async () => {
+    widget.features = ["lanes", "append"];
+    render(<Workspace />);
+    await screen.findByRole("option", { name: "deriva" });
+    await waitFor(() => expect(session.useRepository).toHaveBeenCalled());
+    await userEvent.click(screen.getByRole("button", { name: /^Run$/ }));
+    expect(await screen.findByTestId("linked-base")).toHaveTextContent(/^10$/);
+    vi.mocked(graph.linked).mockResolvedValue(
+      linkedView([
+        { id: "10", deriva_id: "file_a", lane: "intermediate" },
+        { id: "20", deriva_id: "el_a", lane: "output" },
+      ]),
+    );
+    act(() => handlers.onEvent?.(event(2, "progress", { step: "ApplicationComponent", status: "complete" })));
+    await waitFor(() => expect(screen.getByTestId("linked-batch")).toHaveTextContent("1:20"));
+
+    await userEvent.click(screen.getByRole("button", { name: "Cluster" }));
+    expect(screen.getByTestId("linked-base")).toHaveTextContent(/^10,20$/);
+    expect(screen.getByTestId("linked-batch")).toHaveTextContent(/^$/);
+
+    await userEvent.click(screen.getByRole("button", { name: "Type" }));
+    expect(screen.getByTestId("linked-base")).toHaveTextContent(/^10,20$/);
+    expect(screen.getByTestId("linked-batch")).toHaveTextContent(/^$/);
+  });
+
+  it("drops the last batch when a new rank filter draws the view afresh", async () => {
+    widget.features = ["lanes", "append"];
+    render(<Workspace />);
+    await screen.findByRole("option", { name: "deriva" });
+    await waitFor(() => expect(session.useRepository).toHaveBeenCalled());
+    await userEvent.click(screen.getByRole("button", { name: /^Run$/ }));
+    expect(await screen.findByTestId("linked-base")).toHaveTextContent(/^10$/);
+    vi.mocked(graph.linked).mockResolvedValue(
+      linkedView([
+        { id: "10", deriva_id: "file_a", lane: "intermediate" },
+        { id: "20", deriva_id: "el_a", lane: "output" },
+      ]),
+    );
+    act(() => handlers.onEvent?.(event(2, "progress", { step: "ApplicationComponent", status: "complete" })));
+    await waitFor(() => expect(screen.getByTestId("linked-batch")).toHaveTextContent("1:20"));
+    vi.mocked(graph.linked).mockResolvedValue(linkedView([{ id: "20", deriva_id: "el_a", lane: "output" }]));
+
+    await userEvent.click(screen.getByRole("button", { name: "Top 20%" }));
+
+    await waitFor(() => expect(screen.getByTestId("linked-base")).toHaveTextContent(/^20$/));
+    expect(screen.getByTestId("linked-batch")).toHaveTextContent(/^$/);
   });
 
   it("fades out what left and greys a rejected element in place when the widget can remove", async () => {

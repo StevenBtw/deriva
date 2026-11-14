@@ -102,10 +102,15 @@ def test_included_files_link_by_web_address(source):
 PACKAGE_READMES = ["packages/README-deriva-cli.md", "packages/deriva-studio/README.md", "packages/deriva-dev/README.md"]
 
 
+def links_to_the_docs(text: str) -> bool:
+    """Whether ``text`` has a link (bare or Markdown) that starts with the docs site's address."""
+    return re.search(r"(?:^|[\s(<])https://docs\.deriva\.dev/", text, re.MULTILINE) is not None
+
+
 def test_readme_keeps_one_install_line_and_points_to_the_docs():
     text = (ROOT / "README.md").read_text(encoding="utf-8")
     assert text.count("uv tool install") == 1
-    assert "https://docs.deriva.dev/" in text
+    assert links_to_the_docs(text)
     for moved in ("## Set Up an LLM", "## Configuration", "## CLI (Headless Mode)", "## Troubleshooting"):
         assert moved not in text
 
@@ -114,7 +119,7 @@ def test_readme_keeps_one_install_line_and_points_to_the_docs():
 def test_package_readmes_keep_one_install_line_and_point_to_the_docs(readme):
     text = (ROOT / readme).read_text(encoding="utf-8")
     assert text.count("uv tool install") == 1
-    assert "https://docs.deriva.dev/" in text
+    assert links_to_the_docs(text)
     assert "constraints.txt" not in text
 
 
@@ -122,7 +127,6 @@ WORKFLOWS = ROOT / ".github/workflows"
 SOURCES = (
     "docs/**",
     "zensical.toml",
-    "README.md",
     "CONTRIBUTING.md",
     "CHANGELOG.md",
     "pyproject.toml",
@@ -172,6 +176,8 @@ def test_fonts_are_self_hosted():
     assert theme.get("font") is False
     css = (DOCS / "stylesheets/extra.css").read_text(encoding="utf-8")
     assert "fonts.googleapis" not in css
-    for ref in re.findall(r'url\("fonts/([^"]+)"\)', css):
+    refs = re.findall(r'url\("fonts/([^"]+)"\)', css)
+    assert refs, "extra.css serves the fonts itself"
+    for ref in refs:
         assert (DOCS / "stylesheets/fonts" / ref).is_file(), ref
     assert any((DOCS / "stylesheets/fonts").glob("OFL-*.txt")), "font licences ship with the fonts"

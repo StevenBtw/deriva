@@ -35,7 +35,11 @@ function block(selector, mode) {
     if (!(token in t)) throw new Error(`design token "${token}" missing in ${mode}`);
     return `  --${name}: ${t[token]};`;
   });
-  for (let n = 1; n <= 8; n++) lines.push(`  --cluster-${n}: ${widgetTokens[mode][`data-${n}`]};`);
+  for (let n = 1; n <= 8; n++) {
+    const colour = widgetTokens[mode]?.[`data-${n}`];
+    if (typeof colour !== "string" || !colour.trim()) throw new Error(`widget token "data-${n}" missing in ${mode}`);
+    lines.push(`  --cluster-${n}: ${colour};`);
+  }
   lines.push(`  --accent-soft: ${t.link}${SOFT[mode]};`, `  color-scheme: ${mode};`);
   return `${selector} {\n${lines.join("\n")}\n}`;
 }
@@ -47,7 +51,8 @@ ${block(':root[data-theme="light"]', "light")}
 /* design-tokens:end */`;
 
 const css = readFileSync(target, "utf8");
-const next = css.replace(/\/\* design-tokens:start[\s\S]*?\/\* design-tokens:end \*\//, generated);
-if (next === css && !css.includes("design-tokens:start")) throw new Error("markers not found in tokens.css");
-writeFileSync(target, next);
+// Both markers must be there: a missing end marker would otherwise make the replacement a silent no-op
+const markers = /\/\* design-tokens:start[\s\S]*?\/\* design-tokens:end \*\//;
+if (!markers.test(css)) throw new Error("design-tokens:start and design-tokens:end markers not found in tokens.css");
+writeFileSync(target, css.replace(markers, generated));
 console.log(`palette written to ${path.relative(process.cwd(), target)}`);

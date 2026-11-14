@@ -62,7 +62,53 @@ describe("Export config", () => {
 
     expect(model.save).toHaveBeenCalledWith("workspace/output/deriva-20261113-142900.xml");
     await waitFor(() => expect(screen.getByText(/22 elements · 23 relationships · 4 views/)).toBeInTheDocument());
-    // the list is read again, so the new file shows up
-    expect(model.exports).toHaveBeenCalledTimes(2);
+  });
+
+  it("reads the list again after a save, so the new file shows up", async () => {
+    const saved = { name: "deriva-20261113-142900.xml", bytes: 4096, modified: 1_791_900_100 };
+    vi.mocked(model.exports)
+      .mockResolvedValueOnce({ folder: FOLDER, suggested: saved.name, files: [{ name: "model.xml", bytes: 2048, modified: 1_791_900_000 }] })
+      .mockResolvedValueOnce({ folder: FOLDER, suggested: "deriva-20261113-143000.xml", files: [saved, { name: "model.xml", bytes: 2048, modified: 1_791_900_000 }] });
+    render(<Model />);
+    await screen.findByLabelText("File name");
+    expect(screen.queryByRole("cell", { name: saved.name })).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    expect(await screen.findByRole("cell", { name: saved.name })).toBeInTheDocument();
+  });
+
+  it("keeps a name typed before the suggestion arrives", async () => {
+    let answer: (value: Awaited<ReturnType<typeof model.exports>>) => void = () => {};
+    vi.mocked(model.exports).mockReturnValueOnce(new Promise((resolve) => (answer = resolve)));
+    render(<Model />);
+    const name = screen.getByLabelText("File name");
+
+    await userEvent.type(name, "mine");
+    answer({ folder: FOLDER, suggested: "deriva-20261113-142900.xml", files: [] });
+
+    expect(await screen.findByText(`${FOLDER}/mine.xml`)).toBeInTheDocument();
+    expect(name).toHaveValue("mine");
+  });
+
+  it("keeps a field cleared before the suggestion arrives empty", async () => {
+    let answer: (value: Awaited<ReturnType<typeof model.exports>>) => void = () => {};
+    vi.mocked(model.exports).mockReturnValueOnce(new Promise((resolve) => (answer = resolve)));
+    render(<Model />);
+    const name = screen.getByLabelText("File name");
+
+    await userEvent.type(name, "x");
+    await userEvent.clear(name);
+    answer({ folder: FOLDER, suggested: "deriva-20261113-142900.xml", files: [] });
+
+    expect(await screen.findByText("No exports yet.")).toBeInTheDocument();
+    expect(name).toHaveValue("");
+  });
+
+  it("announces a failure to screen readers", async () => {
+    vi.mocked(model.exports).mockRejectedValueOnce(new Error("The output folder cannot be read"));
+    render(<Model />);
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("The output folder cannot be read");
   });
 });

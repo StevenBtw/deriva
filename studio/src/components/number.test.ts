@@ -13,4 +13,8 @@ describe("decimal", () => {
     expect(decimal(1)).toBe("1");
     expect(decimal(0.25)).toBe("0.25");
   });
+
+  it("keeps a seventh significant digit", () => {
+    expect(decimal(Math.fround(1.234567))).toBe("1.234567");
+  });
 });

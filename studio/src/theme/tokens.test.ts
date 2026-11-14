@@ -25,6 +25,24 @@ describe("theme tokens", () => {
     const clusters = (block: string | undefined) => names(block).filter((n) => n.startsWith("--cluster-"));
     expect(clusters(dark)).toEqual(["--cluster-1", "--cluster-2", "--cluster-3", "--cluster-4", "--cluster-5", "--cluster-6", "--cluster-7", "--cluster-8"]);
     expect(clusters(light)).toEqual(clusters(dark));
+    for (const block of [dark, light]) {
+      const colours = (block ?? "")
+        .split(";")
+        .map((part) => part.trim())
+        .filter((part) => part.startsWith("--cluster-"))
+        .map((part) => part.slice(part.indexOf(":") + 1).trim());
+      for (const colour of colours) expect(colour).toMatch(/^#[0-9a-f]{6}$/i);
+      expect(new Set(colours).size).toBe(8);
+    }
+  });
+
+  it("declares the colour scheme of each theme", () => {
+    expect(dark).toMatch(/color-scheme:\s*dark;/);
+    expect(light).toMatch(/color-scheme:\s*light;/);
+  });
+
+  it("lets the pointer cross from the DB indicator to its details without closing them", () => {
+    expect(css).toMatch(/\.db-details::before \{[^}]*height: 7px;/);
   });
 
   it("does not follow the system preference: Studio opens in dark", () => {

@@ -4,7 +4,7 @@ Settings, file types, limits, name patterns and versioned step configuration.
 
 ## Environment Variables (.env)
 
-All configuration lives in `.env` in your [home folder](get-started.md#where-deriva-keeps-its-files); a variable set in the environment wins over the file. Key settings:
+Runtime settings (the graph folder, models and providers, LLM rate limits) live in `.env` in your [home folder](get-started.md#where-deriva-keeps-its-files); a variable set in the environment wins over the file. File types, name patterns, system settings and the versioned step configuration are in Deriva's configuration database, changed with the commands below. Key `.env` settings:
 
 ```bash
 # Graph database (grafeo embedded)
@@ -54,8 +54,9 @@ Default rate limits by provider:
 
 | Provider | Default RPM |
 |----------|-------------|
-| OpenAI | 30 |
-| Anthropic | 30 |
+| Azure OpenAI | 60 |
+| OpenAI | 60 |
+| Anthropic | 60 |
 | Mistral | 60 |
 | Ollama | Unlimited |
 | LM Studio | Unlimited |
@@ -111,7 +112,7 @@ deriva-cli config setting set excluded_directories '[".git", "node_modules", "th
 deriva-cli config setting set max_llm_calls_per_run 5000
 ```
 
-**LLM answers per decision:** the steps that vote (directory classification and element naming) ask the same question `samples` times and keep the majority answer; every step ships with 1. The `llm_samples` setting (1 to 20, also on the studio's **General** page) replaces that for all of them while it is set, and `config setting unset llm_samples` gives each step its own value again. Answers only differ when the model samples (a temperature above 0); more answers cost that many more calls. Benchmark sessions record the value, so measure consistency with 1.
+**LLM answers per decision:** the steps that vote (directory classification and element naming) ask the same question `samples` times and keep the majority answer; every step ships with 1. The `llm_samples` setting (1 to 20, also on the studio's **General** page) replaces that for all of them while it is set, and `config setting unset llm_samples` gives each step its own value again. Answers can differ even at temperature 0 or with the provider's default sampling, and a higher temperature generally adds variation; more answers cost that many more calls. Benchmark sessions record the value, so measure consistency with 1.
 
 ```bash
 deriva-cli config setting set llm_samples 3
